@@ -1,0 +1,44 @@
+$ spirula --lang en mesh --help
+usage: C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe mesh <checkpoint> [--flag value ...]
+
+Extract a surface mesh from a trained 3DGS model.
+<checkpoint> is a run directory (config.json plus step-*.ckpt/), a
+*.ckpt directory, or a splat.ply file.
+
+  --data <dir>            dataset for camera-based occupancy and colors
+                          (default: the `data` recorded in config.json)
+  --no-data               mesh from the Gaussian densities alone
+  --data-format <fmt>     colmap|nerfstudio|metashape (default: work it out)
+  --output <path>         output base path (default: <checkpoint>/mesh);
+                          a known extension is stripped
+  --format <list>         comma-separated: ply,obj,gltf,glb [ply].
+                          With --color texture a format may carry a texture
+                          encoding: glb+png (default), glb+jpg (JPEG q95),
+                          glb+jpeg75 (JPEG q75)
+  --color <mode>          none|vertex|texture [vertex]
+                          (PLY with a texture, and OBJ with vertex colors, are refused)
+  --texture-size <n>      texture atlas resolution; 0 takes it from the
+                          observed-detail texel budget [0]
+  --tex-gutter-px <n>     atlas spacing between UV charts [4]
+  --chart-angle-deg <a>   largest normal deviation within one UV chart [60]
+
+  --iso <v>               isosurface level [0.5 with cameras, 0.2 without]
+  --merge-factor <v>      short-edge merge threshold multiplier [1]
+  --bisection-iters <n>   bisection steps per cut edge [3]
+  --max-cameras <n>       cap on the cameras used, -1 for all of them [-1]
+  --max-grid-res <n>      acceleration grid cap [512]
+  --grid-cell-factor <v>  grid cell size factor [2]
+  --num-threads <n>       0 uses every hardware thread [0]
+  --carve-k <n>           k-th smallest occupancy over the cameras [1]
+  --cull-unseen <0|1>     drop mesh vertices no camera saw [1]
+  --merge-max-flip-deg <a>
+                          fold guard for merge collapses [60]
+  --floater-min-faces <n> drop components smaller than this [100]
+  --fill-hole-ratio <v>   fill loops smaller than this fraction of their component [0.05]
+  --fill-hole-max-edges <n>
+                          always fill loops with at most this many edges [12]
+  --degenerate-angle-deg <a>
+                          repair triangles with angles below this [2]
+  --quality-iters <n>     valence-flip and tangential-relaxation iterations [3]
+  --quiet                 less progress output
+[exit 0]

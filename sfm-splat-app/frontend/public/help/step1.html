@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Step 1 — Import Video / Images</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <nav class="nav">
+    <a href="index.html">Home</a>
+    <a href="step1.html" class="active">1 · Import</a>
+    <a href="step2.html">2 · Extract</a>
+    <a href="step3.html">3 · RC</a>
+    <a href="step4.html">4 · LFS</a>
+    <a href="step5.html">5 · Export</a>
+    <a href="step6.html">6 · Blender</a>
+  </nav>
+
+  <div class="step-header">
+    <div class="step-number">1</div>
+    <div class="step-title">Import Video / Images</div>
+  </div>
+
+  <h2>Purpose</h2>
+  <p>
+    Copy or link your source media (video file or image folder) into the project's
+    <code>input/</code> directory so subsequent steps can access it.
+  </p>
+
+  <h2>Supported inputs</h2>
+  <table>
+    <thead><tr><th>Type</th><th>Formats</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Video</td>
+        <td><code>.mp4</code>, <code>.mov</code>, <code>.avi</code>, <code>.mkv</code></td>
+      </tr>
+      <tr>
+        <td>Images</td>
+        <td><code>.jpg</code>, <code>.jpeg</code>, <code>.png</code>, <code>.tiff</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>How to use</h2>
+  <ol>
+    <li>Select <strong>Video file</strong> or <strong>Image folder</strong> using the file picker.</li>
+    <li>The app copies the file(s) into <code>projects/&lt;name&gt;/input/</code>.</li>
+    <li>Click <strong>Run Step 1</strong> to confirm the import and advance.</li>
+  </ol>
+
+  <div class="tip">
+    For best results, capture footage with <strong>overlapping views ≥ 60 %</strong>
+    and avoid motion blur.
+  </div>
+
+  <div class="warn">
+    Very large files (&gt; 4 GB) may take a moment to copy — do not close the app.
+  </div>
+
+  <h2>Output</h2>
+  <p>
+    Files are stored in <code>input/</code> under the project folder.
+    Video is kept as-is; image sets are copied directly.
+  </p>
+
+  <h2>Troubleshooting</h2>
+  <ul>
+    <li><strong>File not copied</strong> — Check disk space and file permissions.</li>
+    <li><strong>Unsupported format</strong> — Convert to MP4/H.264 before importing.</li>
+  </ul>
+
+</body>
+</html>

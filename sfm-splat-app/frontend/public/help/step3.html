@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Step 3 — Reality Capture Alignment</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <nav class="nav">
+    <a href="index.html">Home</a>
+    <a href="step1.html">1 · Import</a>
+    <a href="step2.html">2 · Extract</a>
+    <a href="step3.html" class="active">3 · RC</a>
+    <a href="step4.html">4 · LFS</a>
+    <a href="step5.html">5 · Export</a>
+    <a href="step6.html">6 · Blender</a>
+  </nav>
+
+  <div class="step-header">
+    <div class="step-number">3</div>
+    <div class="step-title">Reality Capture — Alignment &amp; Export</div>
+  </div>
+
+  <h2>Purpose</h2>
+  <p>
+    Run <strong>Reality Capture (RealityCapture)</strong> in headless / command-line mode
+    to align cameras, reconstruct a sparse point cloud, and export the result
+    (camera poses + colmap-compatible data) into <code>rc_output/</code>.
+  </p>
+
+  <h2>What RC does automatically</h2>
+  <ol>
+    <li>Detects feature points across all frames.</li>
+    <li>Matches features between overlapping images.</li>
+    <li>Estimates camera poses (SfM — Structure from Motion).</li>
+    <li>Exports camera parameters and sparse point cloud.</li>
+  </ol>
+
+  <h2>Prerequisites</h2>
+  <ul>
+    <li>Reality Capture executable path set in <strong>Settings</strong>.</li>
+    <li>At least <strong>80 frames</strong> with ≥ 60 % overlap recommended.</li>
+    <li>Nothing to prepare on the script side: the <code>.rscmd</code> is generated
+        for each run from your settings and written to
+        <code>rc_output/align.rscmd</code>, so you can read exactly what RC was asked
+        to do.</li>
+  </ul>
+
+  <div class="tip">
+    RC works best with evenly distributed viewpoints.
+    Walk around the object slowly in overlapping circles.
+  </div>
+
+  <div class="tip">
+    Sequences are <em>not</em> separate RC projects. Every frame of every sequence goes
+    through one alignment; the goal is a single <strong>component</strong>. If alignment
+    splits, the frames outside the largest component are dropped from the export &mdash;
+    the <strong>Alignment coverage</strong> panel shown after the run says how many, and
+    from which sequence.
+  </div>
+
+  <div class="warn">
+    This step can be GPU-intensive and may take several minutes.
+    Keep the machine active during processing.
+  </div>
+
+  <h2>Output</h2>
+  <p>
+    Camera alignment data and sparse reconstruction saved to
+    <code>projects/&lt;name&gt;/rc_output/</code>.
+  </p>
+
+  <h2>Troubleshooting</h2>
+  <ul>
+    <li><strong>RC exits with error code</strong> — Check the Live Log for details; verify the <code>.rscmd</code> script path.</li>
+    <li><strong>0 cameras aligned</strong> — Too few overlapping frames; increase FPS in Step 2.</li>
+    <li><strong>Slow alignment</strong> — Reduce frame count or upgrade GPU.</li>
+  </ul>
+
+</body>
+</html>

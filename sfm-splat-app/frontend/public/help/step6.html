@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Step 6 — Blender Post-processing</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <nav class="nav">
+    <a href="index.html">Home</a>
+    <a href="step1.html">1 · Import</a>
+    <a href="step2.html">2 · Extract</a>
+    <a href="step3.html">3 · RC</a>
+    <a href="step4.html">4 · LFS</a>
+    <a href="step5.html">5 · Export</a>
+    <a href="step6.html" class="active">6 · Blender</a>
+  </nav>
+
+  <div class="step-header">
+    <div class="step-number">6</div>
+    <div class="step-title">Blender Post-processing (SplatForge)</div>
+  </div>
+
+  <h2>Purpose</h2>
+  <p>
+    Run a headless <strong>Blender</strong> session with the
+    <strong>SplatForge</strong> add-on to perform optional post-processing:
+    cropping, scene composition, camera path baking, and final export to
+    engine-ready formats.
+  </p>
+
+  <h2>What the script does</h2>
+  <ol>
+    <li>Imports the <code>.ply</code> from <code>export/</code>.</li>
+    <li>Applies configured transforms (scale, rotation, origin).</li>
+    <li>Optionally crops to a bounding box.</li>
+    <li>Exports to the target format (e.g. <code>.glb</code>, <code>.splat</code>).</li>
+  </ol>
+
+  <h2>Prerequisites</h2>
+  <ul>
+    <li>Blender ≥ 3.6 path configured in <strong>Settings</strong>.</li>
+    <li>SplatForge add-on installed in Blender.</li>
+    <li>Step 5 completed (valid PLY in <code>export/</code>).</li>
+  </ul>
+
+  <div class="tip">
+    This step is <strong>optional</strong>. If you only need a <code>.splat</code> or
+    raw <code>.ply</code> file, you can stop after Step 5.
+  </div>
+
+  <div class="warn">
+    Blender's Python API is version-sensitive. Ensure your Blender version matches
+    the SplatForge add-on requirements.
+  </div>
+
+  <h2>Output</h2>
+  <p>
+    Final processed scene saved to <code>projects/&lt;name&gt;/export/</code>.
+  </p>
+
+  <h2>Troubleshooting</h2>
+  <ul>
+    <li><strong>Blender not found</strong> — Set the Blender executable path in Settings.</li>
+    <li><strong>SplatForge import error</strong> — Re-install the add-on in Blender preferences.</li>
+    <li><strong>Script fails silently</strong> — Check the Live Log for Python tracebacks.</li>
+  </ul>
+
+</body>
+</html>

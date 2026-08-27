@@ -1,0 +1,3 @@
+$ spirula --version
+2026.8.23
+[exit 0]

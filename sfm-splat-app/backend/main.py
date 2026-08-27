@@ -1,0 +1,73 @@
+import asyncio
+import mimetypes
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+# On Windows, asyncio defaults to SelectorEventLoop which does NOT support
+# subprocesses. Force ProactorEventLoop so asyncio.create_subprocess_exec works.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from backend.api import file_handles, websocket
+from backend.api.routes import defaults, files, pipeline, projects, settings, version
+from backend.core.pipeline_runner import reconcile_orphaned_steps
+from backend.db.database import create_db_and_tables
+
+PROJECTS_DIR = Path(__file__).parent.parent / "projects"
+PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_db_and_tables()
+    # Nothing survives a restart: a step still persisted as "running" belongs to
+    # a run this process never started, and it would freeze that step's button.
+    swept = reconcile_orphaned_steps()
+    if swept:
+        print(f"[startup] reconciled {swept} project(s) with a stale 'running' step", flush=True)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
+app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
+app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
+app.include_router(defaults.router, prefix="/api/defaults", tags=["defaults"])
+app.include_router(files.router, prefix="/api/files", tags=["files"])
+app.include_router(version.router, prefix="/api/version", tags=["version"])
+app.include_router(websocket.router)
+
+# The viewer previews are binary; unknown extensions are served as text/plain,
+# which invites any proxy in the way to treat them as text and re-encode them.
+mimetypes.add_type("application/octet-stream", ".splat")
+mimetypes.add_type("application/octet-stream", ".pc3d")
+mimetypes.add_type("application/octet-stream", ".ply")
+
+# A cancelled download must not leave the file open - see the module.
+file_handles.apply_sync_close()
+
+app.mount("/static", StaticFiles(directory=str(PROJECTS_DIR)), name="static")
+
+
+@app.get("/")
+def read_root():
+    return {"Hello": "World"}
+
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

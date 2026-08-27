@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3DGS Pipeline — Help</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <h1>📖 3DGS Pipeline App — Help</h1>
+
+  <nav class="nav">
+    <a href="index.html" class="active">Home</a>
+    <a href="step1.html">1 · Import</a>
+    <a href="step2.html">2 · Extract</a>
+    <a href="step3.html">3 · RC</a>
+    <a href="step4.html">4 · LFS</a>
+    <a href="step5.html">5 · Export</a>
+    <a href="step6.html">6 · Blender</a>
+  </nav>
+
+  <div class="card">
+    <p>
+      <strong>3DGS Pipeline App</strong> is a six-step desktop workflow that converts
+      a video or image set into a polished <strong>3D Gaussian Splatting</strong> scene,
+      ready for web or engine import.
+    </p>
+  </div>
+
+  <h2>Pipeline overview</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Step</th>
+        <th>Tool</th>
+        <th>Output</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge badge-blue">1</span></td>
+        <td><a href="step1.html">Import Video / Images</a></td>
+        <td>FFmpeg</td>
+        <td>Raw frames in <code>input/</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">2</span></td>
+        <td><a href="step2.html">Extract Frames</a></td>
+        <td>FFmpeg</td>
+        <td>Sampled frames in <code>frames/</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">3</span></td>
+        <td><a href="step3.html">Reality Capture (RC)</a></td>
+        <td>Reality Capture</td>
+        <td>Aligned cameras + sparse cloud in <code>rc_output/</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">4</span></td>
+        <td><a href="step4.html">LFS Training</a></td>
+        <td>Lichtfeld Studio</td>
+        <td>Gaussian splat <code>.ply</code> in <code>lfs_output/</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">5</span></td>
+        <td><a href="step5.html">Export PLY</a></td>
+        <td>SuperSplat</td>
+        <td>Optimised <code>.ply</code> in <code>export/</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">6</span></td>
+        <td><a href="step6.html">Blender Post-processing</a></td>
+        <td>Blender + SplatForge</td>
+        <td>Final scene file in <code>export/</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Quick start</h2>
+  <ol>
+    <li>Click <strong>New Project</strong> in the top bar and give it a name.</li>
+    <li>Follow the steps <strong>1 → 6</strong> in order; each step validates its
+        prerequisites before running.</li>
+    <li>Monitor progress in the <strong>Live Log</strong> panel at the bottom.</li>
+    <li>Use <strong>Abort</strong> in the top bar to cancel a running pipeline safely.</li>
+  </ol>
+
+  <h2>Interface layout</h2>
+  <div class="card">
+    <ul>
+      <li><strong>Top bar</strong> — Project selector, step counter, Abort button.</li>
+      <li><strong>Left sidebar</strong> — Step navigator; click any step to jump to it.</li>
+      <li><strong>Center panel</strong> — Active step configuration and controls.</li>
+      <li><strong>Right sidebar</strong> — Context-sensitive help (this panel).</li>
+      <li><strong>Bottom panel</strong> — Live log output from the running pipeline.</li>
+    </ul>
+  </div>
+
+  <h2>Settings</h2>
+  <p>
+    Open <strong>Settings</strong> from the top bar to configure tool paths
+    (FFmpeg, Reality Capture, Lichtfeld Studio, Blender) and pipeline defaults.
+    Settings are persisted in <code>config.json</code> at the project root.
+  </p>
+
+  <div class="tip">All tool paths must be valid before running any pipeline step.</div>
+
+  <h2>Keyboard shortcuts</h2>
+  <table>
+    <thead><tr><th>Key</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td><code>?</code></td><td>Toggle Help panel</td></tr>
+      <tr><td><code>L</code></td><td>Toggle Live Log panel</td></tr>
+    </tbody>
+  </table>
+
+</body>
+</html>

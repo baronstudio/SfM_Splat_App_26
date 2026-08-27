@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Step 2 — Extract Frames</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <nav class="nav">
+    <a href="index.html">Home</a>
+    <a href="step1.html">1 · Import</a>
+    <a href="step2.html" class="active">2 · Extract</a>
+    <a href="step3.html">3 · RC</a>
+    <a href="step4.html">4 · LFS</a>
+    <a href="step5.html">5 · Export</a>
+    <a href="step6.html">6 · Blender</a>
+  </nav>
+
+  <div class="step-header">
+    <div class="step-number">2</div>
+    <div class="step-title">Extract Frames</div>
+  </div>
+
+  <h2>Purpose</h2>
+  <p>
+    Use <strong>FFmpeg</strong> to extract individual frames from the imported video at a
+    controlled rate, saving them as JPEG images in <code>frames/</code>.
+  </p>
+
+  <h2>Parameters</h2>
+  <table>
+    <thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>FPS</td>
+        <td><code>2</code></td>
+        <td>Frames extracted per second of video</td>
+      </tr>
+      <tr>
+        <td>Quality</td>
+        <td><code>2</code></td>
+        <td>JPEG quality (1 = best, 31 = worst)</td>
+      </tr>
+      <tr>
+        <td>Max frames</td>
+        <td><em>unlimited</em></td>
+        <td>Optional hard cap on extracted frames</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>How to use</h2>
+  <ol>
+    <li>Adjust <strong>FPS</strong> — higher = more frames = better coverage but slower RC.</li>
+    <li>Leave <strong>Quality</strong> at 2 for photogrammetry (high quality JPEG).</li>
+    <li>Click <strong>Run Step 2</strong>.</li>
+  </ol>
+
+  <div class="tip">
+    For a 60-second capture at 2 FPS you get ~120 frames — a good starting point.
+    Aim for <strong>80–300 frames</strong> for Reality Capture.
+  </div>
+
+  <div class="warn">
+    If the input is already an image set (not a video), this step copies images
+    directly to <code>frames/</code> without re-encoding.
+  </div>
+
+  <h2>Output</h2>
+  <p>
+    JPEG frames named <code>frame_00001.jpg</code>, <code>frame_00002.jpg</code>, …
+    stored in <code>projects/&lt;name&gt;/frames/</code>.
+  </p>
+
+  <h2>Troubleshooting</h2>
+  <ul>
+    <li><strong>FFmpeg not found</strong> — Verify the FFmpeg path in Settings.</li>
+    <li><strong>0 frames extracted</strong> — Check that the input video is not corrupt.</li>
+    <li><strong>Blurry frames</strong> — Reduce FPS or use a tripod during capture.</li>
+  </ul>
+
+</body>
+</html>

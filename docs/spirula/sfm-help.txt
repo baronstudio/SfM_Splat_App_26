@@ -1,0 +1,25 @@
+$ spirula --lang en sfm --help
+C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm 2026.8.23 -- Structure from Motion for Spirula Studio
+
+Usage:
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm <command> [options]
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm <command> --help
+
+Commands:
+  auto      reconstruct a sparse model from a directory of images, in one command
+  extract   detect features in an image or a directory of images
+  match     match and geometrically verify a directory of feature files
+  map       incremental reconstruction: matches to a COLMAP sparse model
+  merge     fuse the models of a fragmented capture into fewer
+  ba        bundle-adjust a BAL problem (solver benchmark)
+
+Options:
+  -h, --help      Show this help and exit.
+  -V, --version   Show the version and exit.
+
+Every stage reads and writes COLMAP's formats, so any one of them can be
+replaced by COLMAP's equivalent to bisect a failure. `auto` runs all of them.
+
+Environment:
+  SS_SFM_MAP_PROF=1   print a per-stage breakdown of the mapper's time
+[exit 0]

@@ -1,0 +1,31 @@
+# ── User data ────────────────────────────────────────────────────────────────
+# `projects/` is sacred (CLAUDE.md §2): all user data lives there and no clean,
+# reset or checkout may touch it. The directory itself is kept, its contents
+# are never tracked.
+sfm-splat-app/projects/*
+!sfm-splat-app/projects/.gitkeep
+
+# ── Vendored binaries ────────────────────────────────────────────────────────
+# spirula.exe is 119 MB — over GitHub's hard 100 MB per-file limit — and FFmpeg
+# is another few hundred. Bootstrapped by setup.py, never committed.
+sfm-splat-app/tools/*
+
+# ── Build artefacts ──────────────────────────────────────────────────────────
+# The predecessor's initial import tracked 27 393 files of which 27 096 were
+# artefacts, and every commit afterwards carried Vite-cache and .pyc churn.
+# Excluded from the first commit here rather than removed from the index later.
+sfm-splat-app/.venv/
+__pycache__/
+*.pyc
+node_modules/
+sfm-splat-app/frontend/dist/
+
+# ── Machine-local state ──────────────────────────────────────────────────────
+# Describes one machine, never the repository.
+sfm-splat-app/.version_stamp.json
+imgui.ini
+*.bak
+.claude/settings.local.json
+
+# SQLite project registry: one machine's state, rebuilt on first run.
+sfm-splat-app/pipeline.db

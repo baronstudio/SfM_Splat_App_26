@@ -1,0 +1,25 @@
+# 3DGS Pipeline App — backend dependencies (Python 3.11+)
+# Install:  .venv\Scripts\python.exe -m pip install -r requirements.txt
+# Every entry here has a row in the licence audit table (CLAUDE.md §10).
+
+# ── Web layer ────────────────────────────────────────────────────────────────
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+sqlmodel>=0.0.22
+python-multipart>=0.0.9      # multipart form parsing for the video upload route
+websockets>=12.0
+aiofiles>=23.2
+httpx>=0.27
+
+# ── Pipeline ─────────────────────────────────────────────────────────────────
+watchdog>=4.0                # step_export: watch lfs_output/ for new PLY files
+
+# ── Curation (wizard step 2 — CLAUDE.md §6.3) ────────────────────────────────
+numpy>=1.26                  # score arrays, rolling medians
+scenedetect>=0.6.4           # AdaptiveDetector cut detection
+# NOTE: PySceneDetect depends on `opencv-python`, not on the headless build, so
+# installing it pulls the GUI wheel in. Both provide the same `cv2` package and
+# cannot coexist, so we take the one it asks for. Same Apache-2.0 licence; the
+# GUI symbols simply go unused (this app never opens an OpenCV window).
+opencv-python>=4.9

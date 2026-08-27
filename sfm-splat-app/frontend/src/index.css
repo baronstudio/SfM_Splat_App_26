@@ -1,0 +1,325 @@
+/* ============================================================
+   Tech4Art — Fonts (Google Fonts CDN)
+   ============================================================ */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Manrope:wght@300;400;500;600;700;800&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap");
+
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+@theme {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  /* Sharp corners everywhere per brand rule */
+  --radius-lg: 0rem;
+  --radius-md: 0rem;
+  --radius-sm: 2px;  /* only for tiny affordances */
+}
+
+@layer base {
+  :root {
+    /* ============================================================
+       Tech4Art — Brand Color Palette
+       ============================================================ */
+    --t4a-green:        #7BA935;
+    --t4a-green-dark:   #5D7F26;
+    --t4a-green-deep:   #3F5A14;
+
+    --t4a-teal:         #00A6C8;
+    --t4a-teal-bright:  #00C2D6;
+    --t4a-teal-deep:    #007A99;
+
+    --t4a-blue:         #1F73B8;
+    --t4a-blue-bright:  #2E8FD1;
+    --t4a-blue-deep:    #16385E;
+    --t4a-blue-ink:     #0E2440;
+
+    /* Neutral scale */
+    --t4a-neutral-0:    #FFFFFF;
+    --t4a-neutral-50:   #F5F7FA;
+    --t4a-neutral-100:  #E8ECF1;
+    --t4a-neutral-200:  #D3DAE3;
+    --t4a-neutral-300:  #B2BDCC;
+    --t4a-neutral-400:  #8593A8;
+    --t4a-neutral-500:  #5E6B80;
+    --t4a-neutral-600:  #424E63;
+    --t4a-neutral-700:  #2C3647;
+    --t4a-neutral-800:  #1B2331;
+    --t4a-neutral-900:  #0E1420;
+
+    /* Semantic / state */
+    --t4a-success:      var(--t4a-green);
+    --t4a-info:         var(--t4a-teal);
+    --t4a-warning:      #E0A21A;
+    --t4a-danger:       #C8463A;
+
+    /* Semantic surface tokens */
+    --t4a-bg:           var(--t4a-blue-ink);     /* dark background     */
+    --t4a-bg-subtle:    var(--t4a-blue-deep);
+    --t4a-bg-muted:     var(--t4a-neutral-700);
+    --t4a-bg-inverse:   var(--t4a-neutral-0);
+
+    --t4a-surface:         var(--t4a-blue-deep);
+    --t4a-surface-raised:  var(--t4a-blue-deep);
+    --t4a-surface-sunken:  var(--t4a-neutral-800);
+
+    --t4a-border:          var(--t4a-neutral-700);
+    --t4a-border-strong:   var(--t4a-neutral-600);
+    --t4a-border-inverse:  rgba(255, 255, 255, 0.14);
+
+    --t4a-fg:           var(--t4a-green);          /* primary text = green */
+    --t4a-fg-2:         var(--t4a-green-dark);
+    --t4a-fg-3:         var(--t4a-neutral-400);
+    --t4a-fg-muted:     var(--t4a-neutral-500);
+    --t4a-fg-inverse:   var(--t4a-blue-ink);
+    --t4a-fg-on-brand:  var(--t4a-neutral-0);
+
+    --t4a-accent:        var(--t4a-teal);
+    --t4a-accent-strong: var(--t4a-blue);
+    --t4a-accent-warm:   var(--t4a-green);
+
+    --t4a-link:          var(--t4a-blue);
+    --t4a-link-hover:    var(--t4a-blue-deep);
+
+    /* Signature 4-color gradients */
+    --gradient-signature:
+      linear-gradient(135deg,
+        var(--t4a-green)     0%,
+        var(--t4a-teal)      35%,
+        var(--t4a-blue)      70%,
+        var(--t4a-blue-deep) 100%);
+    --gradient-cool:
+      linear-gradient(180deg,
+        var(--t4a-teal-bright) 0%,
+        var(--t4a-teal)        35%,
+        var(--t4a-blue)        70%,
+        var(--t4a-blue-ink)    100%);
+    --gradient-warm-ridge:
+      linear-gradient(90deg,
+        var(--t4a-green-deep) 0%,
+        var(--t4a-green)      33%,
+        var(--t4a-teal)       66%,
+        var(--t4a-blue)       100%);
+    --gradient-ink:
+      linear-gradient(160deg,
+        var(--t4a-blue-ink)  0%,
+        var(--t4a-blue-deep) 40%,
+        var(--t4a-teal-deep) 75%,
+        var(--t4a-teal)      100%);
+
+    /* Typography — families */
+    --font-sans:    "Inter", "Manrope", -apple-system, BlinkMacSystemFont,
+                    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-display: "Manrope", "Inter", -apple-system, BlinkMacSystemFont,
+                    "Segoe UI", sans-serif;
+    --font-mono:    "Space Mono", "JetBrains Mono", ui-monospace,
+                    SFMono-Regular, Menlo, Consolas, monospace;
+
+    /* Typography — weights */
+    --fw-regular:   400;
+    --fw-medium:    500;
+    --fw-semibold:  600;
+    --fw-bold:      700;
+    --fw-extrabold: 800;
+    --fw-black:     900;
+
+    /* Typography — scale */
+    --fs-12: 0.75rem;
+    --fs-13: 0.8125rem;
+    --fs-14: 0.875rem;
+    --fs-16: 1rem;
+    --fs-18: 1.125rem;
+    --fs-20: 1.25rem;
+    --fs-24: 1.5rem;
+    --fs-30: 1.875rem;
+    --fs-36: 2.25rem;
+    --fs-48: 3rem;
+    --fs-60: 3.75rem;
+    --fs-72: 4.5rem;
+    --fs-96: 6rem;
+
+    /* Typography — line heights */
+    --lh-tight:   1.05;
+    --lh-snug:    1.18;
+    --lh-normal:  1.45;
+    --lh-relaxed: 1.6;
+
+    /* Typography — tracking */
+    --tr-tight:  -0.02em;
+    --tr-snug:   -0.01em;
+    --tr-normal:  0;
+    --tr-wide:    0.04em;
+    --tr-wider:   0.12em;
+
+    /* Spacing — 4px grid */
+    --sp-0:   0;
+    --sp-1:   4px;
+    --sp-2:   8px;
+    --sp-3:   12px;
+    --sp-4:   16px;
+    --sp-5:   20px;
+    --sp-6:   24px;
+    --sp-8:   32px;
+    --sp-10:  40px;
+    --sp-12:  48px;
+    --sp-16:  64px;
+    --sp-20:  80px;
+    --sp-24:  96px;
+    --sp-32:  128px;
+
+    /* Radii — sharp by brand rule */
+    --radius-t4a-0:    0;
+    --radius-t4a-1:    2px;
+    --radius-t4a-pill: 999px;
+
+    /* Shadows */
+    --shadow-1:     0 1px 0 rgba(14,36,64,.04), 0 1px 2px rgba(14,36,64,.06);
+    --shadow-2:     0 2px 4px rgba(14,36,64,.06), 0 6px 12px rgba(14,36,64,.08);
+    --shadow-3:     0 8px 16px rgba(14,36,64,.10), 0 24px 48px rgba(14,36,64,.10);
+    --shadow-focus: 0 0 0 3px rgba(0,166,200,.35);
+    --shadow-inset: inset 0 1px 0 rgba(255,255,255,.6),
+                    inset 0 -1px 0 rgba(14,36,64,.05);
+
+    /* Borders */
+    --bw-1:      1px;
+    --bw-2:      2px;
+    --bw-accent: 3px;
+
+    /* Animation */
+    --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+    --dur-fast:    120ms;
+    --dur-base:    200ms;
+    --dur-slow:    320ms;
+
+    /* Layout */
+    --container-narrow: 720px;
+    --container:        1180px;
+    --container-wide:   1440px;
+
+    /* ============================================================
+       shadcn/ui tokens — remapped to Tech4Art palette (HSL)
+       ============================================================ */
+    --background:             214 64% 15%;      /* t4a-blue-ink    #0E2440 */
+    --foreground:             85 52% 44%;       /* t4a-green       #7BA935 */
+
+    --card:                   212 62% 23%;      /* t4a-blue-deep   #16385E */
+    --card-foreground:        85 52% 44%;       /* t4a-green               */
+
+    --popover:                212 62% 23%;      /* t4a-blue-deep           */
+    --popover-foreground:     85 52% 44%;       /* t4a-green               */
+
+    --primary:                191 100% 39%;     /* t4a-teal        #00A6C8 */
+    --primary-foreground:     0 0% 100%;
+
+    --secondary:              218 23% 23%;      /* t4a-neutral-700 #2C3647 */
+    --secondary-foreground:   85 52% 44%;       /* t4a-green               */
+
+    --muted:                  218 29% 15%;      /* t4a-neutral-800 #1B2331 */
+    --muted-foreground:       83 54% 32%;       /* t4a-green-dark  #5D7F26 */
+
+    --accent:                 85 52% 44%;       /* t4a-green (warm accent) */
+    --accent-foreground:      214 64% 15%;      /* t4a-blue-ink on green   */
+
+    --destructive:            4 55% 50%;        /* t4a-danger      #C8463A */
+    --destructive-foreground: 0 0% 100%;
+
+    --border:                 218 23% 23%;      /* t4a-neutral-700 #2C3647 */
+    --input:                  218 23% 23%;
+    --ring:                   85 52% 44%;       /* t4a-green       #7BA935 */
+
+    --radius:                 0rem;             /* sharp corners            */
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html { color-scheme: dark; }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* ============================================================
+   Tech4Art — Semantic Typography Utilities
+   ============================================================ */
+.t4a-display-l { font-family: var(--font-display); font-weight: var(--fw-extrabold);
+                 font-size: var(--fs-96); line-height: var(--lh-tight);
+                 letter-spacing: var(--tr-tight); color: var(--t4a-fg); }
+.t4a-display-m { font-family: var(--font-display); font-weight: var(--fw-extrabold);
+                 font-size: var(--fs-72); line-height: var(--lh-tight);
+                 letter-spacing: var(--tr-tight); color: var(--t4a-fg); }
+.t4a-display-s { font-family: var(--font-display); font-weight: var(--fw-bold);
+                 font-size: var(--fs-60); line-height: var(--lh-snug);
+                 letter-spacing: var(--tr-tight); color: var(--t4a-fg); }
+
+.t4a-h1 { font-family: var(--font-display); font-weight: var(--fw-bold);
+          font-size: var(--fs-48); line-height: var(--lh-snug);
+          letter-spacing: var(--tr-tight); color: var(--t4a-fg); }
+.t4a-h2 { font-family: var(--font-display); font-weight: var(--fw-bold);
+          font-size: var(--fs-36); line-height: var(--lh-snug);
+          letter-spacing: var(--tr-snug); color: var(--t4a-fg); }
+.t4a-h3 { font-family: var(--font-display); font-weight: var(--fw-semibold);
+          font-size: var(--fs-30); line-height: var(--lh-snug);
+          letter-spacing: var(--tr-snug); color: var(--t4a-fg); }
+.t4a-h4 { font-family: var(--font-display); font-weight: var(--fw-semibold);
+          font-size: var(--fs-24); line-height: var(--lh-snug);
+          color: var(--t4a-fg); }
+
+.t4a-lead   { font-family: var(--font-sans); font-weight: var(--fw-regular);
+              font-size: var(--fs-20); line-height: var(--lh-relaxed); color: var(--t4a-fg-2); }
+.t4a-body   { font-family: var(--font-sans); font-weight: var(--fw-regular);
+              font-size: var(--fs-16); line-height: var(--lh-relaxed); color: var(--t4a-fg); }
+.t4a-body-s { font-family: var(--font-sans); font-weight: var(--fw-regular);
+              font-size: var(--fs-14); line-height: var(--lh-normal); color: var(--t4a-fg-2); }
+.t4a-caption{ font-family: var(--font-sans); font-weight: var(--fw-medium);
+              font-size: var(--fs-12); line-height: var(--lh-normal); color: var(--t4a-fg-3); }
+
+.t4a-eyebrow{ font-family: var(--font-mono); font-weight: var(--fw-bold);
+              font-size: var(--fs-12); line-height: 1;
+              letter-spacing: var(--tr-wider); text-transform: uppercase;
+              color: var(--t4a-teal-deep); }
+
+.t4a-code, code, kbd, pre { font-family: var(--font-mono); font-size: 0.92em; }
+/* ============================================================
+   Indeterminate progress — the honest fill for a phase that
+   reports nothing (components/panels/ProgressBar.tsx)
+   ============================================================ */
+@keyframes t4a-indeterminate {
+  from { background-position: 0 0; }
+  to   { background-position: 28px 0; }
+}
+
+.t4a-indeterminate {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    currentColor 0 6px,
+    transparent 6px 14px
+  );
+  background-size: 28px 100%;
+  animation: t4a-indeterminate 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t4a-indeterminate { animation: none; }
+}

@@ -1,0 +1,326 @@
+$ spirula --lang en sfm auto --help
+C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm auto -- reconstruct a sparse model from a directory of images, in one command
+
+Usage:
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm auto [IMAGE_DIR|DATASET_DIR] -o WORKSPACE [options]
+
+Description:
+  Runs extract -> match -> map -> merge with COLMAP's automatic_reconstructor presets and writes
+  WORKSPACE/{features,matches.bin,sparse/0}. A capture that is not one connected view graph also
+  writes sparse/1, sparse/2, ... -- the remaining components, largest first.
+
+  The positional defaults to `images`; a dataset directory containing `images/` is accepted and
+  that sub-directory used, so `auto DATASET` and `auto DATASET/images` behave the same. `masks`
+  beside the image directory is picked up automatically.
+
+  Two knobs decide the rest: --quality and --data-type. Anything they set can be overridden by
+  naming the flag explicitly, and the run reports what they moved.
+
+Options:
+  -o, --output DIR                        [required]
+      Workspace to write: features/, matches.bin and sparse/0.. land in it.
+  --no-masks
+      Ignore a masks directory even if one is sitting beside the images.
+  --no-manage
+      Skip merging, growing, reseeding and splitting, keeping the mapper's raw models.
+  --progress-dir DIR
+      Write snapshots of the run into DIR while it goes -- the current model and the pair matrix
+      -- for a front end that is watching. Off by default; the graphical interface passes it to
+      its own child.
+  -h, --help
+      Show this help and exit.
+
+ pipeline:
+  --quality {low|medium|high|extreme}     [high]
+      Working resolution, feature budget and pair-selection breadth
+  --data-type {individual|video|internet} [individual]
+      What the capture is: individual photos, video frames, or an unordered internet collection
+  --pairs VALUE                           [auto]
+      Which image pairs are matched; auto is GPU pair selection at 100 images or more,
+      sequential (plus loop closure) for video below that, and exhaustive otherwise (one of:
+      auto exhaustive sequential prefilter)
+  --overlap N                             [10]
+      Neighbours each image is paired with under --pairs sequential
+  --no-loop-closure                       [on]
+      Under --pairs sequential, also match the content-similar pairs GPU pair selection finds,
+      so a capture that revisits a place links back to it
+  --max-error X                           [3]
+      Inlier radius for verification and mapping, in pixels of the image SIFT ran on rather than
+      of the source file (D47)
+  --max-image-size N                      [0]
+      Longest edge the extractor runs on; larger images are downscaled first, and keypoints are
+      still reported in the source image's pixels. 0 picks the frontend's own default (3200 for
+      sift, 1600 for aliked)
+  --masks DIR                             [none]
+      Directory of masks; keypoints on zero (black) pixels are dropped. auto defaults it to
+      `masks` beside the image directory
+
+ colour:
+  --image-gamut VALUE                     [Rec.709]
+      Colour primaries the input images were captured in. Pixels are converted to sRGB before
+      feature extraction, which is what the detectors and the AI models expect (one of: Rec.709
+      ACES2065-1 ACEScg Rec.2020 AdobeRGB DCI-P3)
+  --image-linear                          [off]
+      Treat the input images as linear light rather than display-encoded
+  --point-color {srgb|image}              [srgb]
+      Colour space the sparse point cloud is written in. srgb matches the trainer's
+      convert-initial-point-cloud-color; image writes the points in the same space as the
+      photographs
+
+ camera:
+  --camera-mode {single|folder|image}     [folder]
+      How images are grouped into cameras; every mode splits on image resolution first
+  --camera-model VALUE                    [opencv]
+      Distortion model fitted to each camera group; also takes PREFIX=MODEL to set one group
+      (one of: simple-pinhole pinhole radial opencv full-opencv opencv-fisheye
+      thin-prism-fisheye equirectangular)
+  --focal X                               [0]
+      Starting focal length in pixels, 0 to guess from EXIF or image size; also takes PREFIX=F
+  --distortion VALUE                      [none]
+      Distortion coefficients to start from, "k1,k2,..." in the model's own order; also takes
+      PREFIX=k1,k2,...
+  --no-exif-focal                         [on]
+      Use the focal length EXIF recorded when no --focal covers the group
+  --no-exif-groups                        [on]
+      Split camera groups by what EXIF says the body and the focal setting were (D48)
+  --exif-focal-tol X                      [0.1]
+      Relative tolerance clustering EXIF focals into one group; must exceed EXIF's 1 mm
+      quantization and stay under a real zoom step
+
+ features:
+  --features VALUE                        [sift]
+      Which detector and descriptor; the aliked ones are learned and fetch a checkpoint on first
+      use (one of: sift aliked-n16rot aliked-n32)
+  --max-features N                        [8192]
+      Keypoints kept per image with --features sift, the largest scales first
+  --aliked-max-features N                 [2048]
+      Keypoints kept per image with a learned frontend, the highest scores first
+  --aliked-min-score X                    [0.2]
+      Detection score a learned keypoint must reach
+  --aliked-model VALUE                    [aliked-n16rot]
+      Path to an ALIKED .onnx checkpoint, overriding the one --features names
+  --octaves N                             [4]
+      Scale-space octaves
+  --peak-threshold X                      [0.00666667]
+      DoG response a keypoint must reach
+  --edge-threshold X                      [10]
+      Principal-curvature ratio above which a keypoint is an edge, not a corner
+  --max-orientations N                    [2]
+      Descriptors emitted per keypoint when its gradient is ambiguous
+
+ matching:
+  --matcher {bruteforce|lightglue}        [bruteforce]
+      How descriptors are matched. lightglue is a learned matcher for --features aliked-*; it is
+      an order of magnitude slower per pair, so it only makes sense behind pair selection
+  --lightglue-min-score X                 [0.1]
+      Assignment confidence a LightGlue match must reach
+  --lightglue-model VALUE                 [aliked-lightglue]
+      Path to a LightGlue .onnx checkpoint, overriding the fetched one
+  --ratio X                               [0.8]
+      Lowe ratio: a match is kept when the best distance is below this times the second best
+  --min-similarity X                      [0]
+      Cosine similarity a match must reach, for float descriptors; 0 disables it. Learned
+      descriptors are filtered on this rather than on the ratio
+  --no-cross-check                        [on]
+      Keep only mutual nearest neighbours
+  --max-matches N                         [32768]
+      Cap on matches per pair, 0 for no cap
+  --min-inliers N                         [15]
+      Inliers a verified pair must keep to be recorded
+  --prefilter-features N                  [512]
+      Query descriptors per image in the pair-selection pass
+  --prefilter-train N                     [0]
+      Cap on the train side of that pass, 0 to score against every descriptor
+  --prefilter-neighbors N                 [32]
+      Best-scoring partners each image keeps for full matching
+  --prefilter-min-score N                 [4]
+      Mini-matches below which a pair never qualifies
+  --prefilter-ratio X                     [0.8]
+      Lowe ratio of the scoring pass; looser than the matcher's, as it only ranks
+
+ mapper:
+  --no-compact-unused-features            [on]
+      Keep in memory only feature rows referenced by stored matches; files on disk stay
+      unchanged
+  --focal-trials N                        [5]
+      Trial reconstructions used to pick a focal the motion cannot determine (D48), 0 to skip
+  --refine-principal-point                [off]
+      Let BA move cx,cy throughout; off as in COLMAP, where it is nearly a camera rotation (D50)
+  --no-final-principal-point              [on]
+      One principal-point-free global BA on the finished model, for a single camera group (D51)
+  --pp-min-images N                       [20]
+      Images a group needs before that final pass runs on it
+  --no-refine-extra-params                [on]
+      Let BA move the distortion coefficients throughout; off holds them and leaves them to the
+      final pass (D72)
+  --no-final-extra-params                 [on]
+      Release the distortion coefficients for the global BA on the finished model; off holds the
+      principal point with them
+  --final-per-image-intrinsics            [off]
+      One more global BA at the very end with every image on its own intrinsics, and nothing
+      clamped back to the group (D73)
+  --no-orient                             [on]
+      Write the model upright, centred and unit-scaled from the camera poses, instead of in the
+      seed pair's arbitrary gauge
+  --min-tri-angle X                       [1.5]
+      Triangulation angle a 3D point must subtend to be kept
+  --init-min-tri-angle X                  [16]
+      Median triangulation angle the seed pair must reach; relaxed stepwise if nothing passes
+  --min-pnp-inliers N                     [15]
+      2D-3D inliers an image needs to register
+  --min-pnp-ratio X                       [0.25]
+      Inlier fraction an image needs to register, which rejects accidental agreement
+  --min-image-points N                    [5]
+      Observations below which a registered image is dropped again
+  --ba-loss {trivial|huber|cauchy}        [huber]
+      Robust loss used by mapping-time bundle adjustment
+  --ba-loss-param X                       [2]
+      Huber delta / Cauchy c, in extraction pixels
+  --no-seed-homography                    [on]
+      Re-test a seed candidate for a planar or panoramic configuration on its own inliers,
+      rather than trusting verification's verdict
+  --ba-real {float|double|df|cpu}         [double]
+      Scalar bundle adjustment computes in; df emulates double with a pair of floats, which wins
+      where fp64 throughput is a fraction of fp32
+  --ba-real-coarse {float|double|df|cpu}  [double]
+      Scalar for solves another solve will redo -- growth refinements and merge-tree levels; set
+      equal to --ba-real to compute everything the same way
+  --ba-solver {auto|dense|cg}             [auto]
+      Linear solver for the reduced camera system; auto switches to CG above the size where the
+      dense factorization stops paying
+  --retri-scale X                         [0.75]
+      Retriangulation tolerance as a fraction of --max-error, 0 to skip the pass
+  --no-merge-tracks                       [on]
+      Fuse two 3D points a correspondence says are the same feature
+  --no-rank-by-visibility                 [on]
+      Rank the next image by how its visible structure spreads over the frame, not by count
+  --no-seed-blocking                      [on]
+      A seed retry starts somewhere no earlier attempt reached, instead of rebuilding it
+  --mapper {flat|bottom-up}               [flat]
+      One incremental reconstruction of the whole capture, or small atoms of the view graph
+      reconstructed separately and merged upwards
+  --bup-atom-size N                       [48]
+      Images a view-graph atom is split until it is under
+  --bup-overlap N                         [12]
+      Images each atom borrows from its sibling, which is what a merge aligns on
+  --bup-rounds N                          [16]
+      Levels of the merge tree
+  --bup-atom-threads N                    [0]
+      Atoms reconstructed at once, each on its own Vulkan context; 0 for the default
+  --bup-atom-ba-growth X                  [2]
+      Model growth that triggers a bundle adjustment inside an atom
+  --bup-joint-every N                     [1]
+      Merge-tree levels between joint solves over every model
+  --bup-atom-tight-final                  [off]
+      Converge each atom fully before the merge tree re-solves it anyway
+  --no-bup-coarse-ba                      [on]
+      Run the merge tree's intermediate joint solves to the loose growth-phase tolerance
+  --bup-atom-init-trials N                [8]
+      Seed attempts for an atom's primary model
+  --bup-atom-min-fraction X               [0]
+      Fraction of an atom its primary model must cover to be kept
+  --no-bup-joint-intrinsics               [on]
+      Bundle-adjust every model in one problem with the intrinsics shared per camera
+  --bup-grow-every N                      [1]
+      Levels between growth passes over the models that did not merge; 0 disables
+  --bup-grow-budget X                     [0.25]
+      Images one growth pass may add to a model, as a fraction of what it holds
+  --ba-growth X                           [1.1]
+      Model growth that triggers the next global bundle adjustment
+  --ba-growth-rtol X                      [0.0001]
+      Relative cost improvement a growth-phase BA stops below, 0 for the solver's
+  --ba-growth-patience N                  [5]
+      Accepted steps below that tolerance before it stops
+  --max-models N                          [50]
+      Reconstructions a fragmented capture may produce; 1 for a single model
+  --model-overlap N                       [20]
+      Images a further model may take from one already kept -- what a merge later aligns on
+  --model-overlap-ratio X                 [1]
+      Further images it earns per image it finds that nothing holds, on top of --model-overlap;
+      0 for COLMAP's flat cap (D66)
+  --min-model-size N                      [10]
+      Images a model must reach to be kept at all
+  --no-pnp-ratio-visible                  [on]
+      Measure the PnP inlier ratio over the correspondences the pose could see, not every one
+      offered (D69)
+  --strong-pnp-inliers N                  [0]
+      Agreeing correspondences past which a registration is admitted whatever its inlier ratio,
+      since the ratio reads a pool the scene decides (D69); 0 off
+  --strong-pnp-max-rival X                [0.5]
+      ... but only if no second pose explains this share of the winner's count among the
+      correspondences it rejected -- two plausible places is not evidence
+  --audit-evidence N                      [40]
+      Correspondences an image needs before the audit will judge its pose
+
+ manage:
+  --max-bridges N                         [0]
+      Merges a stalled level may attempt on shared structure instead of shared images (D70);
+      off, because the seam test then judges the evidence that made them
+  --no-merge                              [on]
+      Merge models that share images, on the Sim(3) those shared poses give (D43)
+  --no-grow                               [on]
+      Register still-unregistered images into the models that exist
+  --no-reseed                             [on]
+      Look for further models among the images nothing covers
+  --audit                                 [off]
+      Check each pose against the correspondence graph and re-register what a model cannot
+      support (D44)
+  --no-split                              [on]
+      Break a model its own verified pairs contradict
+  --no-fold-split                         [on]
+      Cut a model that has written two places on top of each other, when the cut severs almost
+      no co-visibility (D46)
+  --fold-max-cut X                        [0.005]
+      Co-visibility that cut may sever, as a fraction of the model's total
+  --fold-min-overlap X                    [0.5]
+      Images of a cut-off piece that must stand where an image outside it stands, or it is put
+      back rather than called a duplicate (D67); 0 disables
+  --seam-min-agreement X                  [0.6]
+      Verified pairs crossing a merge seam that must still hold in the merged model; 0 disables
+  --seam-relative-bar X                   [0.6]
+      Judge a seam against what the model's own non-crossing pairs explain, times this; it only
+      ever loosens --seam-min-pair-fraction (D68). 0 uses that flat
+  --seam-min-pairs N                      [10]
+      Cross-seam pairs below which the seam test has nothing to judge on
+  --seam-rescue X                         [0.2]
+      Median cross-seam pair a refused merge must still explain to earn one refinement and a
+      second verdict; 0 refuses outright
+  --seam-max-rescues N                    [8]
+      Refinements the seam rescue may spend in one merge pass
+
+ merge:
+  --merge-max-error X                     [8]
+      Alignment inlier threshold in pixels for the merge step
+  --merge-min-common N                    [3]
+      Shared images an alignment needs in the merge step
+  --merge-arbitrate N                     [20]
+      Shared images whose poses agree, past which a disagreement about the shape of what two
+      models share is arbitrated by the cross-seam test instead of refusing the merge; 0 always
+      refuses
+
+ runtime:
+  --threads N                             [0]
+      Host worker threads: two-view verification, and the mapper's per-point and per-image
+      passes; 0 is every core, 1 is serial, and results do not depend on the count
+  --decode-threads N                      [0]
+      Image decode threads; 0 is every core, 1 decodes inline
+  --decode-budget N                       [0]
+      Memory the decode pool may hold in flight, in MB
+  --device N                              [-1]
+      Vulkan device index; -1 picks the first suitable one
+  --quiet                                 [off]
+      Print only the result lines, not per-stage progress
+
+Examples:
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm auto images/ -o workspace/
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm auto -o ws/                       # ./images and ./masks, all defaults
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm auto DATASET/ -o ws/ --data-type video --quality medium
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm auto images/ -o ws/ --camera-model opencv-fisheye --focal 520
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm auto images/ -o ws/ --camera-model cam0=thin-prism-fisheye
+
+Exit status:
+  0  a reconstruction that looks sound
+  1  usage or runtime error
+  2  no reconstruction at all
+  3  partial: under half the images registered, or over 2 px mean reprojection
+[exit 0]

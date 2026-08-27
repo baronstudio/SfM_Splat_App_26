@@ -1,0 +1,39 @@
+$ spirula --lang en sam extract --help
+C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sam extract <video> [options]
+
+Frame selection
+  -o, --out <dir>        output directory (default: <video-without-ext>/images)
+  -s, --skip <n>         write one frame every n source frames (default 1)
+  -k, --keep <n>         choose the sharpest of the last n frames; -1 = round(skip/2)
+                         (default), 0 = no selection
+  -n, --max-frames <n>   stop after writing n frames
+  -q, --quality <0..100> JPEG quality; outside that range writes PNG (default 95)
+  -r, --rotate <deg>     0, 90, 180 or 270, clockwise
+      --scale <f>        resize factor, at most 1
+      --track <i>        video track to read; default is every track, written to
+                         <out>/cam0, <out>/cam1, ...
+      --threads <n>      image-encoder threads (default: cores - 1)
+
+Masking (needs --model)
+      --model <file>     SAM 3 checkpoint
+      --text <phrases>   semicolon-separated noun phrases, e.g. "person; car"
+      --neg-text <ph>    phrases to subtract from the mask
+      --mask-mode <m>    video (default) tracks instances across frames; image treats
+                         every written frame independently
+      --mask-keep <w>    background (default): the prompt names distractors and
+                         everything else is kept; subject: the prompt names what to
+                         keep and everything else is masked out
+      --mask-out <dir>   default: 'masks' beside the image directory
+      --detect-every <n> run the detector every n frames (default 1); the memory bank
+                         carries instances in between
+      --memory-frames <n>
+                         cap spatial memory frames per instance; memory attention is
+                         linear in this and dominates the cost
+      --max-size <n>     longest side handed to the model (default 1600, 0 = off);
+                         masks come back at frame resolution
+      --threshold <f>    detection score threshold (default 0.5)
+      --nms <f>          NMS IoU threshold (default 0.1)
+      --overlay          also write a colour overlay next to each mask
+
+Common: --device <index|name>  --profile  --validate
+[exit 2]

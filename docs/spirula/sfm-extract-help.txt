@@ -1,0 +1,83 @@
+$ spirula --lang en sfm extract --help
+C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm extract -- detect features in an image or a directory of images
+
+Usage:
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm extract <IMAGE|DIR> [-o OUT] [options]
+
+Description:
+  GPU SIFT over one image or, recursively, a directory. A directory reuses one GPU context and
+  processes largest-first, so device buffers are allocated once; decoding runs on a pool sized
+  to fit --decode-budget, and peak memory does not grow with the number of images. Feature files
+  mirror the image tree.
+
+  Keypoints are written in the *source* image's coordinates even when --max-image-size
+  downscaled it, and each file records what EXIF said about the focal length and the camera, so
+  `match` and `map` can build intrinsics for the images on disk without seeing them (D46).
+
+Options:
+  -o, --output DIR|FILE                   [features]
+      Output directory for a directory of images, or the .bin file for a single image.
+  -h, --help
+      Show this help and exit.
+
+ pipeline:
+  --max-image-size N                      [0]
+      Longest edge the extractor runs on; larger images are downscaled first, and keypoints are
+      still reported in the source image's pixels. 0 picks the frontend's own default (3200 for
+      sift, 1600 for aliked)
+  --masks DIR                             [none]
+      Directory of masks; keypoints on zero (black) pixels are dropped. auto defaults it to
+      `masks` beside the image directory
+
+ colour:
+  --image-gamut VALUE                     [Rec.709]
+      Colour primaries the input images were captured in. Pixels are converted to sRGB before
+      feature extraction, which is what the detectors and the AI models expect (one of: Rec.709
+      ACES2065-1 ACEScg Rec.2020 AdobeRGB DCI-P3)
+  --image-linear                          [off]
+      Treat the input images as linear light rather than display-encoded
+  --point-color {srgb|image}              [srgb]
+      Colour space the sparse point cloud is written in. srgb matches the trainer's
+      convert-initial-point-cloud-color; image writes the points in the same space as the
+      photographs
+
+ features:
+  --features VALUE                        [sift]
+      Which detector and descriptor; the aliked ones are learned and fetch a checkpoint on first
+      use (one of: sift aliked-n16rot aliked-n32)
+  --max-features N                        [8192]
+      Keypoints kept per image with --features sift, the largest scales first
+  --aliked-max-features N                 [2048]
+      Keypoints kept per image with a learned frontend, the highest scores first
+  --aliked-min-score X                    [0.2]
+      Detection score a learned keypoint must reach
+  --aliked-model VALUE                    [aliked-n16rot]
+      Path to an ALIKED .onnx checkpoint, overriding the one --features names
+  --octaves N                             [4]
+      Scale-space octaves
+  --peak-threshold X                      [0.00666667]
+      DoG response a keypoint must reach
+  --edge-threshold X                      [10]
+      Principal-curvature ratio above which a keypoint is an edge, not a corner
+  --max-orientations N                    [2]
+      Descriptors emitted per keypoint when its gradient is ambiguous
+  --profile                               [off]
+      Print per-stage GPU timings for the extractor
+  --spv-path FILE                         [none]
+      Load the SIFT kernels from this SPIR-V file instead of the embedded blob
+
+ runtime:
+  --decode-threads N                      [0]
+      Image decode threads; 0 is every core, 1 decodes inline
+  --decode-budget N                       [0]
+      Memory the decode pool may hold in flight, in MB
+  --device N                              [-1]
+      Vulkan device index; -1 picks the first suitable one
+  --quiet                                 [off]
+      Print only the result lines, not per-stage progress
+
+Examples:
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm extract images/ -o features/
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm extract images/ -o features/ --masks masks/ --max-features 4096
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sfm extract photo.jpg -o photo.bin
+[exit 0]

@@ -1,0 +1,33 @@
+$ spirula --help
+Spirula Studio 2026.8.23
+
+  spirula                        ouvrir l'application
+  spirula <file-or-folder>       l'ouvrir dans l'application
+  spirula <command> [options]
+
+Commandes :
+  gui      l'application graphique (par défaut)
+  sfm      structure from motion : photos ou images -> caméras
+  train    entraîner un modèle de splats sur un jeu de données
+  sam      segmentation, suivi et extraction d'images
+  geometry estimer la profondeur et les normales d'un jeu de données
+  mesh     extraire un maillage d'un modèle entraîné
+
+`spirula <command> --help` décrit l'une d'entre elles.
+
+Chaque commande accepte aussi --lang <code>, qui règle la langue de l'interface (ou SS_LANG dans l'environnement) :
+
+    en        English
+    ja        Japanese
+    zh-Hans   Chinese (Simplified)
+    zh-Hant   Chinese (Traditional)
+    ko        Korean
+    de        German
+    fr        French
+    es        Spanish
+    pt        Portuguese
+    it        Italian
+    nl        Dutch
+    ru        Russian
+    tr        Turkish
+[exit 0]

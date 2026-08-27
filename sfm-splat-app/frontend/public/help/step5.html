@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Step 5 — Export PLY</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <nav class="nav">
+    <a href="index.html">Home</a>
+    <a href="step1.html">1 · Import</a>
+    <a href="step2.html">2 · Extract</a>
+    <a href="step3.html">3 · RC</a>
+    <a href="step4.html">4 · LFS</a>
+    <a href="step5.html" class="active">5 · Export</a>
+    <a href="step6.html">6 · Blender</a>
+  </nav>
+
+  <div class="step-header">
+    <div class="step-number">5</div>
+    <div class="step-title">Export PLY</div>
+  </div>
+
+  <h2>Purpose</h2>
+  <p>
+    Optimise and re-export the raw <code>.ply</code> from Step 4 using
+    <strong>SuperSplat</strong> — a web-based Gaussian Splat editor.
+    This step removes outliers, reorders splats for faster streaming,
+    and optionally compresses the output.
+  </p>
+
+  <h2>Export options</h2>
+  <table>
+    <thead><tr><th>Option</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Compress (SPLAT)</td>
+        <td>Export as <code>.splat</code> binary — ~4× smaller than raw PLY</td>
+      </tr>
+      <tr>
+        <td>Keep raw PLY</td>
+        <td>Also keep the original <code>point_cloud.ply</code> for Blender</td>
+      </tr>
+      <tr>
+        <td>Remove outliers</td>
+        <td>Filter Gaussians with low opacity or extreme scale</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>How to use</h2>
+  <ol>
+    <li>Review the preview in the <strong>PLY Viewer</strong> panel (bottom of the center area).</li>
+    <li>Configure export options.</li>
+    <li>Click <strong>Run Step 5</strong>.</li>
+  </ol>
+
+  <div class="tip">
+    The <code>.splat</code> format is recommended for web deployment (PlayCanvas, Three.js).
+    Use <code>.ply</code> if you need to continue in Blender (Step 6).
+  </div>
+
+  <h2>Output</h2>
+  <p>
+    Exported files saved to <code>projects/&lt;name&gt;/export/</code>.
+  </p>
+
+  <h2>Troubleshooting</h2>
+  <ul>
+    <li><strong>SuperSplat not responding</strong> — The PLY file may be corrupt; re-run Step 4.</li>
+    <li><strong>File too large</strong> — Enable compression or reduce iterations in Step 4.</li>
+    <li><strong>Artefacts in export</strong> — Enable "Remove outliers" option.</li>
+  </ul>
+
+</body>
+</html>

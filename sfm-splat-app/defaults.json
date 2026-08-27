@@ -1,0 +1,121 @@
+{
+    "schema_version": 1,
+    "extract": {
+        "capture_preset": "orbit_drone",
+        "fps_mode": "auto",
+        "fps_ratio": 0.2,
+        "fps_absolute": 2.0,
+        "target_frame_count": 300,
+        "mpdecimate": false,
+        "quality": 2,
+        "scale_percent": 100,
+        "max_frames": 0,
+        "keep_alpha": true
+    },
+    "curate": {
+        "enabled": true,
+        "auto_after_extract": true,
+        "scene_detector": "adaptive",
+        "cut_source": "auto",
+        "min_scene_len": 15,
+        "sharpness_window": 15,
+        "sharpness_sensitivity": 50,
+        "overlap_from_preset": true,
+        "overlap_min_step_pct": 2.0,
+        "overlap_band_max_pct": 12.0
+    },
+    "sfm": {
+        "quality": "high",
+        "data_type": "individual",
+        "pairs": "auto",
+        "camera_model": "opencv",
+        "camera_mode": "folder",
+        "max_image_size": 0,
+        "max_features": 8192,
+        "use_masks": true,
+        "progress_dir": false
+    },
+    "sam": {
+        "mode": "off",
+        "shape_spec": "",
+        "shrink": 0.01,
+        "samples": 24,
+        "dark": 16,
+        "replace": false,
+        "text": "",
+        "neg_text": "",
+        "detect_every": 1,
+        "threshold": 0.5,
+        "nms": 0.1,
+        "max_size": 1600,
+        "keep_prompted": false
+    },
+    "geometry": {
+        "enabled": false,
+        "model": "",
+        "depth": false,
+        "max_size": 1064,
+        "normal_format": "jpg",
+        "jpeg_quality": 95,
+        "depth_units": "relative",
+        "ray_depth": "auto",
+        "split": "auto",
+        "overwrite": false
+    },
+    "train": {
+        "preset": "3dgs",
+        "num_iterations": 30000,
+        "quality": "medium",
+        "cap_max": 1000000,
+        "sh_degree": 3,
+        "primitive": "3dgs",
+        "background_mode": "black",
+        "steps_per_save": 2000,
+        "save_only_latest_checkpoint": true,
+        "save_eval_images": false,
+        "distraction_robustness": "off",
+        "floater_suppression": "off",
+        "load_masks": true,
+        "apply_loss_for_mask": true,
+        "mask_boundary_offset": 0.0,
+        "load_depths": true,
+        "load_normals": true,
+        "depth_supervision_weight": 0.0,
+        "normal_supervision_weight": 0.01,
+        "orientation_method": "up",
+        "center_method": "poses",
+        "auto_scale_poses": true,
+        "train_frame": "points"
+    },
+    "mesh": {
+        "formats": [
+            "glb"
+        ],
+        "color": "vertex",
+        "texture_encoding": "png",
+        "texture_size": 0,
+        "iso": 0.0,
+        "use_cameras": true,
+        "max_cameras": -1,
+        "max_grid_res": 512,
+        "cull_unseen": true,
+        "floater_min_faces": 100,
+        "quality_iters": 3,
+        "num_threads": 0
+    },
+    "export": {
+        "format": "ply",
+        "pattern": "{project}_{index:05d}"
+    },
+    "blender": {
+        "scene_scale": 1.0,
+        "import_mode": "splatforge"
+    },
+    "viewer": {
+        "preview_max_points": 1000000,
+        "point_size": 1.6,
+        "show_cameras": true,
+        "show_camera_path": true,
+        "background": "#0b1220"
+    }
+}

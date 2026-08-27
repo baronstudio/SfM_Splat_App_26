@@ -1,0 +1,89 @@
+$ spirula --lang en sam --help
+C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sam -- SAM 2 / SAM 3 segmentation and tracking on Vulkan
+
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sam devices
+        List Vulkan devices and whether each meets the baseline.
+
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sam segment --model <file> --image <file> [options]
+        --text <phrase>         concept prompt (all matching instances)
+        --box x0,y0,x1,y1       exemplar box; repeatable
+        --neg-box x0,y0,x1,y1   negative exemplar box; repeatable
+        --point x,y             positive click; repeatable (visual prompt)
+        --neg-point x,y         negative click; repeatable
+        --prompt-box x0,y0,x1,y1
+                                box prompt for the visual path
+        --multimask             return the three ambiguity masks
+        --threshold <f>         detection score threshold
+        --nms <f>               NMS IoU threshold
+        --out <dir>             write mask PNGs and an overlay
+
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sam track --model <file> --frames <dir> [options]
+        --text <phrase>         detect and track matching instances;
+                                semicolon-separated for several concepts
+        --neg-text <phrase>     concepts to KEEP even where --text matches
+        --point x,y             click on an object to track; repeatable
+        --neg-point x,y         click on something that is NOT it
+        --object                end this object, start the next one -- two things need
+                                two objects, since one instance prompted with both
+                                fits neither
+        --at-frame <n>          put the clicks that follow on frame n instead of the
+                                first, and use them to correct the object there.
+                                Frames are numbered as this command reads them.
+                                --point 640,360 --at-frame 90 --point 700,300
+                                --object --point 120,500
+                                ... is one object clicked once and corrected at frame
+                                90, and a second object.
+        --detect-every <n>      run the detector every n frames; the memory bank
+                                carries tracks in between
+        --memory-frames <n>     cap spatial memory frames per instance
+        --max-frames <n>        stop after n frames
+        --out <dir>             write a per-frame binary mask PNG
+        --keep-prompted         white = the prompted objects. By default they are
+                                BLACK and everything else is white, which is what a
+                                reconstruction pipeline wants from "mask out the
+                                people"
+        --overlay               write a colour overlay instead
+
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sam mask <images> [options]
+        Mask the part of every frame that is never scene: a fisheye border, a
+        watermark, the rig in shot. Needs no model -- it is in the same place in
+        every frame, so it is a shape, not an object.
+        --out <dir>             where the masks go (default: 'masks' beside the image
+                                directory)
+        --shape <spec>          use these shapes instead of looking for a border; ';'
+                                separates them and a leading '-' cuts one out again
+                                ellipse cx,cy,rx,ry  |  rect x0,y0,x1,y1
+                                "ellipse 0.5,0.5,0.49,0.49; -rect 0,0.93,1,1"
+        --shrink <f>            pull the found boundary inwards, as a fraction of its
+                                radius (default 0.01); the outermost pixels of a lens
+                                circle are dim and smeared, and worth losing
+        --samples <n>           frames read per camera when looking for the border
+                                (default 24)
+        --dark <0..255>         brightness at or below which a pixel counts as black,
+                                0..255 (default 16)
+        --mask-image <file>     also drop wherever this image is black -- the way out
+                                when no ellipse or rectangle describes the region
+        --preview <file>        write one frame with the mask drawn over it, to check
+                                by eye
+        --print                 print the shapes and write nothing
+        --replace               overwrite masks already in the output folder; without
+                                it they are intersected, which is how this stacks on
+                                top of a model's masks
+
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sam video --info <file>
+        Probe a video file and report codec, geometry and decode support.
+
+  C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sam extract <video> [options]
+        Write the sharpest frames of a video, optionally masked.
+        `C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe sam
+        extract --help` lists its own options.
+
+Common: --device <index|name>  --vram  --profile  --validate  --img-size <n>
+        --max-size <n>          downscale inputs to fit (default 1600, 0 = off)
+        --image-gamut <name>    colour primaries the frames are in; they convert to
+                                sRGB first
+        --image-linear / --no-image-linear
+                                frames are linear light, not display-encoded
+Environment: SS_NN_LOG=0..3  SS_VK_DEVICE  SS_PROFILE=1
+             SS_VK_VALIDATION=1  SS_NN_DEBUG_SYNC=1
+[exit 2]

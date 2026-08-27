@@ -1,0 +1,7 @@
+{
+    "spirula_exe_path": "tools/spirula/spirula.exe",
+    "spirula_model_cache": "",
+    "ffmpeg_path": "C:/Users/jbbar/AppData/Local/Microsoft/WinGet/Links/ffmpeg.exe",
+    "ffmpeg_hwaccel": "cuda",
+    "blender_exe_path": "C:/Program Files/Blender Foundation/Blender 5.1/blender.exe"
+}

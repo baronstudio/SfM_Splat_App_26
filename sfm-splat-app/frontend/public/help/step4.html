@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Step 4 — LFS Training</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <nav class="nav">
+    <a href="index.html">Home</a>
+    <a href="step1.html">1 · Import</a>
+    <a href="step2.html">2 · Extract</a>
+    <a href="step3.html">3 · RC</a>
+    <a href="step4.html" class="active">4 · LFS</a>
+    <a href="step5.html">5 · Export</a>
+    <a href="step6.html">6 · Blender</a>
+  </nav>
+
+  <div class="step-header">
+    <div class="step-number">4</div>
+    <div class="step-title">LFS — Gaussian Splat Training</div>
+  </div>
+
+  <h2>Purpose</h2>
+  <p>
+    Run <strong>Lichtfeld Studio</strong> (LFS) to train a 3D Gaussian Splatting model
+    from the camera-aligned frames produced in Step 3.
+    The result is a <code>.ply</code> file containing millions of coloured Gaussian primitives.
+  </p>
+
+  <h2>Key parameters</h2>
+  <table>
+    <thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Iterations</td>
+        <td><code>30 000</code></td>
+        <td>Training steps — more = better quality but slower</td>
+      </tr>
+      <tr>
+        <td>Densification interval</td>
+        <td><code>100</code></td>
+        <td>How often to split/clone Gaussians</td>
+      </tr>
+      <tr>
+        <td>SH degree</td>
+        <td><code>3</code></td>
+        <td>Spherical harmonics degree (view-dependent colour)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>How to use</h2>
+  <ol>
+    <li>Confirm LFS path is set in <strong>Settings</strong>.</li>
+    <li>Adjust iteration count if needed (30 k is the standard).</li>
+    <li>Click <strong>Run Step 4</strong>.</li>
+    <li>Watch the Live Log for per-iteration loss values.</li>
+  </ol>
+
+  <div class="tip">
+    A 30 000-iteration run on an RTX 3080 typically takes 10–20 minutes for
+    ~200 frames.
+  </div>
+
+  <div class="warn">
+    Requires a CUDA-capable NVIDIA GPU. CPU training is not supported.
+  </div>
+
+  <h2>Output</h2>
+  <p>
+    Final <code>point_cloud.ply</code> and checkpoints saved to
+    <code>projects/&lt;name&gt;/lfs_output/</code>.
+  </p>
+
+  <h2>Troubleshooting</h2>
+  <ul>
+    <li><strong>CUDA out of memory</strong> — Reduce image resolution or frame count.</li>
+    <li><strong>Loss diverges</strong> — Check camera alignment quality in Step 3.</li>
+    <li><strong>LFS not found</strong> — Verify the Lichtfeld Studio path in Settings.</li>
+  </ul>
+
+</body>
+</html>

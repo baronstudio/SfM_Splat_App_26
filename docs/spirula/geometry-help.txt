@@ -1,0 +1,61 @@
+$ spirula --lang en geometry --help
+C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe geometry -- Depth and surface normals for a dataset, from a single image each
+
+    C:\Travail\DEV\SfM_Splat_App_26\sfm-splat-app\tools\spirula\spirula.exe geometry <dataset> [options]
+
+    The dataset folder: a transforms.json, a COLMAP sparse/ model or a Metashape
+    export. Normals are written to normals/ and depth to depths/, which both dataset
+    readers find by name -- nothing rewrites your transforms.json.
+
+Options
+    --model <id|file>         Which checkpoint to run. A known id is fetched and
+                              cached; a path to an .onnx file is used as it is. Larger
+                              is slower and only somewhat better.
+    --max-size <n>            Longest side of one image the network runs, and of the
+                              maps written. A split sizes its faces off the full frame
+                              and meets this only as a ceiling, so a wide capture
+                              still runs most of the detail it was shot with. 1064 is
+                              what the model's own pipeline uses.
+    --num-tokens <n>          How many patches MoGe's transformer runs, which is what
+                              sets its cost rather than the image size. Its own range
+                              is 1200 to 3600, and it is capped at what the image
+                              holds. Metric3D ignores this.
+    --depth                   Also write depth maps. Off by default: the normals are
+                              what a reconstruction usually wants, and depth doubles
+                              both the time on disk and the reading a training run
+                              does.
+    --normal-format png|jpg   File type for the normal maps. `jpg` is about a fifth
+                              the size; the loss lands on the normal's direction,
+                              which the geometry term reads directly.
+    --jpeg-quality <n>        JPEG quality for the normal maps, when the format is
+                              `jpg`.
+    --depth-units relative|mm What a stored depth value means. `relative` fills the 16
+                              bits with the scene, dividing by its own 99.9th
+                              percentile, and is what the depth term wants -- it
+                              correlates log depths and ignores any scale. `mm` stores
+                              millimetres, which is readable but flattens everything
+                              past 65.5 m.
+    --ray-depth auto|yes|no   Whether the stored depth is the distance along the ray
+                              rather than a z coordinate. `auto` picks ray depth
+                              exactly when the frame was split into pinhole faces,
+                              which is the same call the trainer's
+                              --input-depth-is-ray-depth makes when it is left unset.
+    --split auto|yes|no       Whether to split a wide frame into several pinhole faces
+                              instead of undistorting it to one. `auto` splits a
+                              panorama always and a fisheye when one pinhole would
+                              keep less than three quarters of the frame.
+    --overwrite               Recompute maps that are already on disk. Without it a
+                              run continues where the last one stopped.
+    --image-gamut <name>      Colour primaries the dataset's images are in. Frames
+                              convert to sRGB before inference, which is what the
+                              model was trained on.
+    --image-linear / --no-image-linear
+                              Treat the dataset's images as linear light rather than
+                              display-encoded.
+    --check                   run the camera round-trip self-test and exit
+
+Also: --device <index|name>  --lang <code>
+Environment: SS_NN_LOG=0..3  SS_VK_DEVICE  SS_PROFILE=1
+
+    moge2-vits, moge2-vitb, moge2-vitl, metric3d-vit-small, metric3d-vit-large, metric3d-vit-giant2
+[exit 0]
