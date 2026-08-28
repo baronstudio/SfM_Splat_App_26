@@ -1,0 +1,35 @@
+$ spirula --lang en geometry <project>/sfm --max-size 512
+# Captured 2026-08-28 on zz_abort_test: 238 frames, 1 camera group.
+# The curl download fragments (CR-redrawn, several hundred) are collapsed to one
+# marker line; everything else is verbatim.
+
+### RUN 1 - no images/ under the dataset: exit 0, nothing written (703 CR-redrawn curl fragments collapsed)
+sfm: 238 images, 1 cameras
+[moge] fetching moge2-vitb-normal.onnx (419.4 MB) from https://huggingface.co/Ruicheng/moge-2-vitb-normal-onnx/resolve/main/model.onnx
+[moge] saved C:\Users\jbbar\AppData\Local\spirula-studio\models\moge2-vitb-normal.onnx
+[vk] device: NVIDIA GeForce RTX 4060 Laptop GPU (discrete, 7.8 GiB)
+[moge] C:\Users\jbbar\AppData\Local\spirula-studio\models\moge2-vitb-normal.onnx: dim=768 depth=12 heads=12 hidden=3072, taps 5,11, levels 768/256/128/64/32 +normal +mask +scale, 333 tensors, 207.69 MB on device in 1 chunks (0 graph constants skipped)
+camera 0: PINHOLE, undistorted to one 512x384 pinhole
+load_image: cannot read 'C:/Travail/DEV/SfM_Splat_App_26/sfm-splat-app/projects/zz_abort_test/sfm\images\frame_0001.jpg': can't fopen
+skipping C:/Travail/DEV/SfM_Splat_App_26/sfm-splat-app/projects/zz_abort_test/sfm\images\frame_0001.jpg
+load_image: cannot read 'C:/Travail/DEV/SfM_Splat_App_26/sfm-splat-app/projects/zz_abort_test/sfm\images\frame_0002.jpg': can't fopen
+    ... 470 more identical lines ...
+skipping C:/Travail/DEV/SfM_Splat_App_26/sfm-splat-app/projects/zz_abort_test/sfm\images\frame_0237.jpg
+load_image: cannot read 'C:/Travail/DEV/SfM_Splat_App_26/sfm-splat-app/projects/zz_abort_test/sfm\images\frame_0238.jpg': can't fopen
+skipping C:/Travail/DEV/SfM_Splat_App_26/sfm-splat-app/projects/zz_abort_test/sfm\images\frame_0238.jpg
+done: 0 written, 0 already there, in 0s
+
+### RUN 2 - images/ junctioned to frames/: 238 normals in 35 s (0 CR-redrawn curl fragments collapsed)
+sfm: 238 images, 1 cameras
+[vk] device: NVIDIA GeForce RTX 4060 Laptop GPU (discrete, 7.8 GiB)
+[moge] C:\Users\jbbar\AppData\Local\spirula-studio\models\moge2-vitb-normal.onnx: dim=768 depth=12 heads=12 hidden=3072, taps 5,11, levels 768/256/128/64/32 +normal +mask +scale, 333 tensors, 207.69 MB on device in 1 chunks (0 graph constants skipped)
+camera 0: PINHOLE, undistorted to one 512x384 pinhole
+gemm: wide tile (2.83 ms wide, 8.21 ms narrow)
+1 / 238 images, 3071 ms each, 12m left
+2 / 238 images, 1605 ms each, 6m left
+3 / 238 images, 1110 ms each, 4m left
+    ... 232 more identical lines ...
+236 / 238 images, 125 ms each, 0s left
+237 / 238 images, 125 ms each, 0s left
+238 / 238 images, 125 ms each, 0s left
+done: 238 written, 0 already there, in 35s

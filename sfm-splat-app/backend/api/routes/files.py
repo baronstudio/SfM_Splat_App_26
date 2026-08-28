@@ -9,6 +9,9 @@ from sqlmodel import Session
 from backend.core import cameras, colmap, frames as frame_files, preview, sources
 from backend.core.config import app_config
 from backend.core.steps.step_analyze import read_json
+from backend.core.steps.step_export import find_export_splat
+from backend.core.steps.step_mesh import find_outputs
+from backend.core.steps.step_train import find_splat
 from backend.db.database import get_session
 from backend.models.project import Project
 
@@ -146,6 +149,49 @@ async def read_train_result(project_id: str, session: Session = Depends(get_sess
     }
 
 
+@router.get("/{project_id}/mesh")
+async def read_mesh_result(project_id: str, session: Session = Depends(get_session)):
+    """How the last meshing run went, and what step 5 is about to read.
+
+    Written by step 5 to `mesh/mesh_result.json`, for the same reason steps 3
+    and 4 write theirs: the run prints 419 lines of which 360 are one counter,
+    and the numbers that matter - vertices, faces, components, boundary edges,
+    texture size and texel coverage - are on four of them.
+
+    `input` is the panel's half of the contract every step here keeps: say what
+    the run will read before it reads it. The checkpoint is step 4's splat and
+    the cameras are step 3's model, and a mesh needs both unless the user turns
+    the cameras off.
+
+    Answers 200 with null before the first run - the caller is a UI panel, not
+    a dependency.
+    """
+    slug = get_slug_from_id(project_id, session)
+    project_path = PROJECTS_DIR / slug
+    report = read_json(project_path / "mesh" / "mesh_result.json")
+
+    splat = find_splat(project_path / "train")
+    outputs = find_outputs(project_path / "mesh")
+    return {
+        "mesh": report,
+        "input": {
+            "has_splat": splat is not None,
+            "splat_file": splat.name if splat else None,
+            "splat_bytes": splat.stat().st_size if splat else None,
+            "checkpoint": splat.parent.name if splat else None,
+            "has_model": colmap.find_model(project_path / "sfm") is not None,
+        },
+        "files": [
+            {
+                "filename": p.name,
+                "bytes": p.stat().st_size,
+                "url": f"/static/{slug}/mesh/{p.name}",
+            }
+            for p in outputs
+        ],
+    }
+
+
 @router.get("/{project_id}/masks")
 async def read_masks(project_id: str, session: Session = Depends(get_session)):
     """What `masks/` holds, read off the folder rather than off a log line.
@@ -168,9 +214,15 @@ async def read_masks(project_id: str, session: Session = Depends(get_session)):
 
     masks = frame_files.list_mask_images(frame_files.masks_dir(project_path))
     frames = frame_files.list_frames(project_path / "frames")
+    # What the last `spirula sam` run did, for the same reason step 3 and step 4
+    # write a result file: the run says how it went on the log bus and a log line
+    # is gone on the next page load. Null before the first run.
+    report = read_json(project_path / "analysis" / "mask_result.json")
+
     if not masks:
         return {"masks": {"masks": 0, "frames": len(frames), "matched": 0,
-                          "state": "none", "note": "No masks yet."}}
+                          "state": "none", "note": "No masks yet."},
+                "run": report}
 
     frame_stems = {p.stem for p in frames}
     matched = sum(1 for m in masks if m.stem in frame_stems)
@@ -184,7 +236,42 @@ async def read_masks(project_id: str, session: Session = Depends(get_session)):
             if matched else
             "No mask basename matches a frame - the tools pair them by name."
         ),
-    }}
+    }, "run": report}
+
+
+@router.get("/{project_id}/geometry")
+async def read_geometry(project_id: str, session: Session = Depends(get_session)):
+    """What `sfm/normals/` and `sfm/depths/` hold, and how the last run went.
+
+    The counts are read off the folders rather than off the report, because the
+    folders are what `train` reads: `--depth-dir` and `--normal-dir` default to
+    `depths` and `normals` relative to `--data`, and with `--data <project>/sfm`
+    that is these two directories exactly (CLAUDE.md §7.5). Their being non-empty
+    is what decides whether step 4 sends `--load-depths` / `--load-normals` at
+    all, so the panel showing a count is showing the same thing the step will
+    decide on.
+
+    200 with zeroes before the first run - the caller is a UI panel.
+    """
+    slug = get_slug_from_id(project_id, session)
+    project_path = PROJECTS_DIR / slug
+    sfm_dir = project_path / "sfm"
+
+    def _count(name: str) -> int:
+        target = sfm_dir / name
+        return sum(1 for p in target.iterdir() if p.is_file()) if target.is_dir() else 0
+
+    return {
+        "geometry": {
+            "normals": _count("normals"),
+            "depths": _count("depths"),
+            "images": frame_files.count_frames(project_path / "frames"),
+            # `geometry` reads the reconstruction's cameras, so a project with
+            # no model has nothing for this pass to run against.
+            "has_model": colmap.find_model(sfm_dir) is not None,
+        },
+        "run": read_json(sfm_dir / "geometry_result.json"),
+    }
 
 
 def _verdict_index(slug: str) -> tuple[dict, dict, dict]:
@@ -299,16 +386,35 @@ async def delete_frames(
 
 @router.get("/{project_id}/export")
 async def list_export_files(project_id: str, session: Session = Depends(get_session)):
+    """What `export/` holds — the shared directory of steps 5 and 6 (§14.1).
+
+    `role` tells the splat from the mesh, because with `mesh --format ply` both
+    are a `.ply` and only the name says which is which: step 6 imports the
+    splat, and `mesh.ply` is not it (`step_export.find_export_splat`).
+    """
     slug = get_slug_from_id(project_id, session)
     export_dir = PROJECTS_DIR / slug / "export"
 
     if not export_dir.exists():
         return {"files": []}
 
+    splat = find_export_splat(export_dir)
+    mesh_suffixes = {".ply", ".obj", ".gltf", ".glb"}
+
+    def role_of(path: Path) -> str:
+        if splat is not None and path == splat:
+            return "splat"
+        if path.suffix.lower() in mesh_suffixes:
+            return "mesh"
+        # `scene.blend` and `README_SPLATFORGE.txt` — step 6's half of the
+        # directory, which a step 5 reset takes with it.
+        return "scene"
+
     files = [
         {
             "filename": f.name,
-            "size_bytes": f.stat().st_size,
+            "bytes": f.stat().st_size,
+            "role": role_of(f),
             "url": f"/static/{slug}/export/{f.name}",
         }
         for f in sorted(export_dir.iterdir(), key=lambda f: f.name)

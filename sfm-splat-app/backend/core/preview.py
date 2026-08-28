@@ -10,13 +10,20 @@ One preview per (source, level): the UI opens at the default level and can ask
 for a bigger one - up to the whole file - without throwing away the small one
 it is already showing.
 
-**Two sources, and they are found rather than named.** `sfm` is whichever
+**Three sources, and they are found rather than named.** `sfm` is whichever
 `sparse/N` the reconstruction left (`sparse/0` is the largest component), and
 `train` is the checkpoint the trainer kept - `--save-only-latest-checkpoint`
 defaults 1, but that is the tool's default and not a promise, so the glob takes
-the highest step it finds instead of assuming there is one. Step 5's mesh is
-deliberately absent: a textured glb is neither a point cloud nor a splat, and
-whether it gets a third renderer or a thumbnail is still open (§13.6).
+the highest step it finds instead of assuming there is one.
+
+`mesh` is step 5's surface, and it is **the one source with no preview file at
+all**. A textured glb is neither a point cloud nor a splat: there is no record
+format to decimate it into, `three`'s own `GLTFLoader` reads it as it stands,
+and the reference mesh was 11.6 MB against the 178 MB splat it came from. So
+its "preview" is the source, served from the same `/static` mount, and every
+piece of cache bookkeeping below is skipped for it. Only glTF is offered -
+a `--format ply` mesh would be read by the PLY parser as a plain cloud and
+drawn as its vertices, which is a different picture rather than a cheaper one.
 """
 
 from __future__ import annotations
@@ -34,7 +41,16 @@ from backend.core import colmap, ply
 PREVIEW_DIRNAME = "preview"
 
 # The sources the viewer can ask for, in wizard order.
-SOURCES: tuple[str, ...] = ("sfm", "train")
+SOURCES: tuple[str, ...] = ("sfm", "train", "mesh")
+
+# What a mesh source reports as its `kind`. `ply.KIND_CLOUD` / `KIND_SPLAT` are
+# the two the record formats cover; this one has no record format (see the
+# module docstring) and the viewer keys its renderer on the value.
+KIND_MESH = "mesh"
+
+# glTF only, and in this order: `GLTFLoader` reads both, and `.glb` is the one
+# `spirula mesh` writes with the texture inside it rather than beside it.
+_MESH_SUFFIXES = (".glb", ".gltf")
 
 # `sfm auto` writes the sparse cloud here and nowhere else.
 _SPARSE_POINTS = "points3D.bin"
@@ -57,7 +73,47 @@ def find_source(project_path: Path, source: str) -> Optional[Path]:
         return _find_sparse(project_path)
     if source == "train":
         return _find_splat(project_path)
+    if source == "mesh":
+        return _find_mesh(project_path)
     raise PreviewError(f"Unknown preview source {source!r}")
+
+
+def _find_mesh(project_path: Path) -> Optional[Path]:
+    """Step 5's glTF mesh, `.glb` before `.gltf`, or None.
+
+    `mesh --output <project>/mesh/mesh` names them, so the glob is over one
+    directory and the suffix is what picks. A run asked only for PLY or OBJ
+    leaves nothing here on purpose: the viewer says there is nothing to show
+    rather than drawing an OBJ's vertices as a point cloud.
+    """
+    mesh_dir = project_path / "mesh"
+    if not mesh_dir.is_dir():
+        return None
+    for suffix in _MESH_SUFFIXES:
+        found = sorted(
+            p for p in mesh_dir.glob(f"*{suffix}")
+            if p.is_file() and p.stat().st_size > 0
+        )
+        if found:
+            return found[0]
+    return None
+
+
+def _mesh_total(project_path: Path) -> int:
+    """Vertices in the mesh, off `mesh_result.json` rather than out of the glb.
+
+    The count is a label under the canvas, not something the viewer needs to
+    load the file, and step 5 already read it off the tool's own `stats:` line.
+    Parsing a glTF here to re-derive it would be a second, worse reader.
+    """
+    try:
+        report = json.loads(
+            (project_path / "mesh" / "mesh_result.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return 0
+    value = report.get("vertices")
+    return int(value) if isinstance(value, (int, float)) else 0
 
 
 def _find_sparse(project_path: Path) -> Optional[Path]:
@@ -236,6 +292,18 @@ def status(project_path: Path, slug: str, source: str,
         "max_count": max_count,
         "ready": False,
     }
+
+    if source == "mesh":
+        # The one source with nothing to build: `GLTFLoader` reads the file the
+        # tool wrote, so the "preview" URL *is* the source URL and none of the
+        # fingerprint / stamp / prune bookkeeping below applies.
+        total = _mesh_total(project_path)
+        base.update(
+            kind=KIND_MESH, total=total, ready=True, url=base["source_url"],
+            count=total, bytes=stat.st_size, decimated=False,
+        )
+        return base
+
     try:
         described = describe(src)
     except (ply.PlyError, OSError, ValueError) as exc:
@@ -263,6 +331,9 @@ def build(project_path: Path, slug: str, source: str, max_count: Optional[int],
     src = find_source(project_path, source)
     if src is None:
         raise PreviewError(f"No {source} output to preview yet.")
+    if source == "mesh":
+        # Nothing to convert - `status` already reports it ready.
+        return status(project_path, slug, source, max_count)
 
     described = describe(src)
     target = _target(project_path, source, described["kind"], max_count,

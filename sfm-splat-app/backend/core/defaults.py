@@ -212,6 +212,16 @@ class SamDefaults(BaseModel):
     replace: bool = False
 
     # -- track: needs a SAM checkpoint --
+    # `sam track --model` takes a **file**, not an id: unlike `geometry`, which
+    # fetches a known id into its own cache, there is no download on this route
+    # at all. The checkpoints are never bundled (§10), so this is the path of
+    # one the user fetched by hand.
+    model: str = ""
+    # Which licence was read and accepted for that file. Two rows in §10 and two
+    # separate acceptances, because they are not the same question: SAM 2.1 is
+    # Apache-2.0 and SAM 3 is Meta's own, non-standard licence. Empty refuses the
+    # run — an unaccepted licence is not a default we may pick on JB's behalf.
+    model_licence: Literal["", "sam2.1", "sam3"] = ""
     text: str = ""
     neg_text: str = ""
     detect_every: int = 1

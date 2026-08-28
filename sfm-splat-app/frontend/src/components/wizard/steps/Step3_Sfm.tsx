@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  AlertTriangle, CheckCircle, Info, RefreshCw, Sliders, Split,
+  AlertTriangle, CheckCircle, Info, Layers, RefreshCw, Sliders, Split,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { usePipelineStore } from '@/store/pipelineStore';
@@ -11,9 +11,10 @@ import { useProjectSettings } from '@/hooks/useProjectSettings';
 import { ProgressBar } from '@/components/panels/ProgressBar';
 import SceneViewer from '@/components/viewer/SceneViewer';
 import SfmSettings from '@/components/settings/SfmSettings';
+import MaskSettings, { maskRefusal } from '@/components/settings/MaskSettings';
 import SaveState from '@/components/settings/SaveState';
 import client from '@/api/client';
-import type { SfmDefaults, SfmResult } from '@/types';
+import type { MaskRunResult, SamDefaults, SfmDefaults, SfmResult } from '@/types';
 
 /** What `masks/` holds, off the folder rather than off a log line. */
 interface MaskState {
@@ -126,19 +127,29 @@ const SfmReport: React.FC<{ result: SfmResult }> = ({ result }) => {
 
 const Step3_Sfm: React.FC = () => {
   const { currentProjectId, stepStatuses, setCurrentStep } = usePipelineStore();
-  const { startPipeline } = usePipeline();
+  const { startPipeline, generateMasks } = usePipeline();
   const { defaults } = useDefaults();
   const { frames, summary, analysed } = useCuration(currentProjectId);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showMasks, setShowMasks] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SfmResult | null>(null);
   const [masks, setMasks] = useState<MaskState | null>(null);
+  const [maskRun, setMaskRun] = useState<MaskRunResult | null>(null);
 
   const {
     value: sfm, setValue: setSfm, flush: flushSfm,
     saving, savedAt, error: saveError,
   } = useProjectSettings<SfmDefaults>(currentProjectId, 'sfm', defaults?.sfm ?? null);
+
+  // The mask pass is layer 3 like everything else, and it attaches to step 3
+  // without being it: `spirula sam` writes an *input* to the reconstruction, so
+  // running it never marks this step done (CLAUDE.md §7.4).
+  const {
+    value: sam, setValue: setSam, flush: flushSam,
+    saving: samSaving, savedAt: samSavedAt, error: samSaveError,
+  } = useProjectSettings<SamDefaults>(currentProjectId, 'sam', defaults?.sam ?? null);
 
   const status = stepStatuses[3];
   const isRunning = status === 'running';
@@ -150,8 +161,11 @@ const Step3_Sfm: React.FC = () => {
       .then((r) => setResult(r.data?.sfm ?? null))
       .catch(() => setResult(null));
     client.get(`/files/${currentProjectId}/masks`)
-      .then((r) => setMasks(r.data?.masks ?? null))
-      .catch(() => setMasks(null));
+      .then((r) => {
+        setMasks(r.data?.masks ?? null);
+        setMaskRun(r.data?.run ?? null);
+      })
+      .catch(() => { setMasks(null); setMaskRun(null); });
   }, [currentProjectId]);
 
   // Re-read when the step finishes: `sfm_result.json` is written by the run, so
@@ -172,8 +186,20 @@ const Step3_Sfm: React.FC = () => {
     }
   };
 
+  const handleMasks = async () => {
+    if (!currentProjectId || !sam) return;
+    setError(null);
+    try {
+      await flushSam();
+      await generateMasks(currentProjectId, { sam });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to start the mask run');
+    }
+  };
+
   const frameCount = frames.length;
   const rejected = analysed && summary ? summary.total - summary.kept : 0;
+  const samRefusal = sam ? maskRefusal(sam) : 'Loading…';
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-4xl mx-auto">
@@ -219,7 +245,15 @@ const Step3_Sfm: React.FC = () => {
       </div>
 
       <div className="flex items-center justify-end gap-1">
-        <SaveState saving={saving} savedAt={savedAt} error={saveError} />
+        <SaveState saving={saving || samSaving} savedAt={samSavedAt ?? savedAt} error={saveError ?? samSaveError} />
+        <Button
+          variant="ghost" size="sm"
+          onClick={() => setShowMasks((v) => !v)}
+          className="text-slate-400 hover:text-slate-100 gap-1"
+        >
+          <Layers className="w-4 h-4" />
+          Masks
+        </Button>
         <Button
           variant="ghost" size="sm"
           onClick={() => setShowSettings((v) => !v)}
@@ -237,6 +271,56 @@ const Step3_Sfm: React.FC = () => {
             maskCount={masks?.matched ?? 0}
             onChange={setSfm}
           />
+        </div>
+      )}
+
+      {/* The mask pass — a separate run, never a re-alignment (CLAUDE.md §7.4).
+          Its own button and its own bar, because re-aligning to change a lens
+          border is exactly as unacceptable as re-extracting to change a
+          sharpness sensitivity. It writes masks/, which the reconstruction below
+          then adopts as a sibling of frames/ with no flag at all. */}
+      {showMasks && sam && (
+        <div className="rounded-lg bg-slate-800 border border-slate-700 p-4 space-y-4">
+          <MaskSettings
+            settings={sam}
+            frameCount={frameCount}
+            onChange={setSam}
+          />
+
+          <div className="flex items-center gap-3 flex-wrap border-t border-slate-700/60 pt-4">
+            <Button
+              onClick={handleMasks}
+              disabled={isRunning || !!samRefusal || frameCount === 0}
+              className="bg-slate-700 hover:bg-slate-600 text-white gap-1"
+            >
+              <Layers className="w-4 h-4" />
+              {masks && masks.masks > 0 ? 'Re-run the mask pass' : 'Generate masks'}
+            </Button>
+            <span className="text-xs text-slate-500">
+              Writes <span className="font-mono">masks/</span> and nothing else —
+              the reconstruction is not re-run.
+            </span>
+          </div>
+
+          {maskRun && (
+            <div className="rounded-md bg-slate-900/60 border border-slate-700 px-3 py-2 text-xs text-slate-400 space-y-1">
+              <p>
+                Last run: <span className="text-slate-200">{maskRun.mode === 'shape' ? 'lens border / fixed shape' : `tracking "${maskRun.text ?? ''}"`}</span>
+                {' · '}{maskRun.masks} masks, {maskRun.matched} paired
+                {maskRun.model && ` · ${maskRun.model} (${maskRun.model_licence})`}
+                {' · '}spirula {maskRun.spirula_version}
+              </p>
+              {maskRun.no_border && (
+                <p className="text-amber-300/90">
+                  No lens border was found, so nothing was written — the expected
+                  answer for a rectilinear capture. Name a shape to mask a region
+                  anyway.
+                </p>
+              )}
+            </div>
+          )}
+
+          {(isRunning || maskRun) && <ProgressBar step="masks" label="spirula sam" />}
         </div>
       )}
 

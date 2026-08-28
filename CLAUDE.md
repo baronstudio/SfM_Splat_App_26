@@ -170,18 +170,21 @@ sfm-splat-app/
     ├── masks/                  # ⭑ one greyscale PNG per frame, same basename.
     │                          #   Written by step 2 (an imported set's alpha) or by
     │                          #   `spirula sam` (§7.4). Never inside frames/.
-    ├── analysis/               # curation JSON — see below
+    ├── analysis/               # curation JSON + mask_result.json — see below
     ├── report/                 # report.json + report.md
     ├── sfm/                    # step 3 — the `spirula sfm auto` workspace:
     │   ├── features/          #   one .bin per image
     │   ├── matches.bin
     │   ├── sparse/0..N/       #   COLMAP model, BINARY (cameras/images/points3D.bin)
     │   ├── depths/  normals/  #   step 4's geometry panel writes here (§7.5)
-    │   └── sfm_result.json    #   exit code, registered/total, reprojection error
+    │   ├── sfm_result.json    #   exit code, registered/total, reprojection error
+    │   └── geometry_result.json # how the last `spirula geometry` run went (§7.5)
     ├── train/                  # step 4 — `--output-dir-prefix`
     │   └── run/               #   `--output-dir-name`: config.json + step-%09d.ckpt/
-    ├── mesh/                   # step 5 — `--output` (§7.7: never left to default)
-    ├── export/                 # steps 5 and 6 share it
+    ├── mesh/                   # step 5 — `--output` (§7.8: never left to default):
+    │                          #   mesh.glb / .ply / .obj / .gltf + mesh_result.json
+    ├── export/                 # steps 5 and 6 share it: splat.ply + mesh.* (hard links,
+    │                          #   §7.10), then step 6's scene.blend + README
     └── preview/                # ⚙ generated: browser-sized copies for the viewer,
         └── sources/           #   plus poster frames and cached ffprobe. Cache.
 ```
@@ -195,7 +198,9 @@ projects/<slug>/analysis/
 │                     #   extraction on frames it was decoding anyway (§6.6)
 ├── scores.json       # per frame: index, filename, sharpness, displacement_pct, sequence_id
 ├── selection.json    # kept[] / rejected[{frame, reason}] — regenerated on each analysis
-└── overrides.json    # manual keep/drop from the UI — NEVER regenerated, always wins
+├── overrides.json    # manual keep/drop from the UI — NEVER regenerated, always wins
+└── mask_result.json  # how the last `spirula sam` run went (§7.4). Here rather than in
+                      #   masks/, which holds one greyscale PNG per frame and nothing else
 ```
 
 **Why per-frame data is JSON and not SQL:** a single project produces thousands of frame
@@ -251,10 +256,20 @@ Three more properties of the layout, each read off the tool rather than chosen:
 - **`train` finds the COLMAP model** by probing `{sparse/0, colmap/sparse/0, sparse,
   colmap, .}` under `--data`, so `--data <project>/sfm` finds `sfm/sparse/0` with no
   flag. Proven by the run in the table above.
-- **`--mask-dir`, `--depth-dir` and `--normal-dir` are the same shape as `--image-dir`**
-  (all four are documented as "Subfolder holding …"), so the same absolute-path escape
-  hatch is available for each. Only `--image-dir` has been measured; the other three are
-  **assumed by symmetry and not yet verified** — see §13.
+- **`--mask-dir` takes an absolute path outside `--data`, and that is measured too.**
+  Three 200-iteration runs each way on one 238-image dataset (2026-08-28): with a real
+  absolute mask directory psnr came out **15.12 / 17.48 / 15.18**, with an absolute path
+  that does not exist **22.40 / 22.68 / 20.33** — the runs are not deterministic but the
+  bands are disjoint by ~2.9 dB, which is masked corners trained as empty space against an
+  image that is not empty there. `--depth-dir` and `--normal-dir` are still assumed by
+  symmetry and are not on the live path: `sfm/depths` and `sfm/normals` sit inside `--data`
+  and keep their relative defaults. **The trap in the second row is the one to remember:
+  a wrong `--mask-dir` exits 0 and trains unmasked**, because `--load-masks` is documented
+  "use the dataset's masks when they exist" — so step 4 logs the mask count.
+
+- **`geometry` is the exception to all of this.** It has no `--image-dir` at all and
+  resolves `<dataset>\images\<name>`, which §7.5 measures and works around with a
+  junction that lives only for the length of the run.
 
 ---
 
@@ -613,6 +628,18 @@ bundled, the tool shows the terms before fetching, and §10 carries a row for ea
 `sam devices` is how the setup panel proves the GPU baseline; `sam --help` exits **2**,
 not 0, which a naive precondition check would read as a failure.
 
+**Measured whole on 2026-08-28** — `docs/spirula/sam-mask-run.txt`. `sam mask` writes
+`<stem>.png`, i.e. `frame_0001.png` beside `frame_0001.jpg`, which is the basename
+convention `masks/` already holds. **Two lines for the entire run** — the image count,
+then `masks written: N, in <dir>` — and 238 frames in **2.6 s**, so there is no per-frame
+channel here and none is needed. The speculative run behaved exactly as this section
+predicted: `no border found ...; name one with --shape`, exit 0, nothing written.
+
+**`step_sam.py` writes its report to `analysis/mask_result.json`, not into `masks/`.**
+Section 5 says `masks/` holds one greyscale PNG per frame, and it is a directory both
+`sfm auto` and `train` are pointed at; a report file in it would contradict the layout the
+readers are reading. Both go with a step 2 reset, so nothing is orphaned.
+
 ### 7.5 Geometry supervision — `spirula geometry` (a panel on step 4)
 
 Per-image depth and normal maps feeding the trainer's geometry terms. Not a step: it
@@ -645,10 +672,32 @@ the exact path to save the file to.
 The cache path belongs in `config.json` so the setup panel can show it, pre-seed it and
 report its size.
 
-**Unverified:** whether `geometry` resolves images that live outside the dataset folder,
-as `train --image-dir` does. The run above got as far as reading the model but was killed
-during the download, so this is genuinely open and it is the one thing that could force a
-junction into §5's layout. First item in §13.
+**It does NOT resolve images outside the dataset folder, and that is now measured.**
+This was §13.1, the one thing said to be able to force a junction into §5's layout, and it
+did. There is no `--image-dir` on this tool. Run against `<project>/sfm`, whose images live
+in the sibling `<project>/frames`, it resolved `<project>/sfm\imagesrame_0001.jpg`,
+answered `can't fopen` and `skipping` for all 238 images, and finished
+`done: 0 written, 0 already there, in 0s` -- **exit 0**. `docs/spirula/geometry-run.txt`
+holds both runs.
+
+**So `step_geometry` junctions `sfm/images` to `frames/` for the length of the run and
+removes it in a `finally`.** With the junction in place the identical command wrote **238
+normal maps in 35 s** at `--max-size 512`, 55 MB. The link exists only while the command
+does, so §5's layout on disk is exactly what §5 says it is and no copy, archive, reset or
+preview ever meets one. A Windows junction needs neither administrator rights nor
+Developer Mode, unlike `os.symlink`; `os.rmdir` removes it and leaves the target intact,
+which was verified before it was relied on, because getting it wrong deletes `frames/`.
+
+**Exit 0 is not success here**, as the failing run above shows, so the step judges the
+folder and `done: N written` rather than the return code. The working channel is
+`N / M images, T ms each, R left`, one line per image, which is what the bar rides;
+`done: N written, M already there, in Ts` closes it. Without `--overwrite` a run continues
+where the last one stopped, so an aborted pass is cheap to resume.
+
+**A format switch writes beside, not over.** A `--normal-format png` run followed by a
+`jpg` one left `sfm/normals/` holding **476 files for 238 frames**. Which of the two
+`train --normal-dir` then reads is not something this app should guess at, so the run says
+so and names the count.
 
 ### 7.6 Step 4 — `spirula train`
 
@@ -807,11 +856,33 @@ PLY carries no texture, OBJ carries no vertex colours.
 
 Measured on the 7 000-iteration splat above (998 463 gaussians), `--format glb --color
 texture`: **203.98 s**, 544 317 vertices, 612 886 faces, an 8192×8192 texture at 1.2 %
-texel coverage, exit 0, `mesh.glb` 29.9 MB. Phases the log tags, in order: `loading`,
-`point cloud`, `occupancy`, `marching tets`, `cut edges`, `bisection`, `merge`,
-`cull unseen`, `cleanup`, `quality`, `orient`, `texel density`, `color`, `bake`,
-`texture`, `stats`, `wrote`, `done`. The countable one is `color: cameras rendered:
-N/251`; `texture` alone was 30.88 s of the 204.
+texel coverage, exit 0, `mesh.glb` 29.9 MB.
+
+**The phase list was captured whole on 2026-08-28** — `docs/spirula/mesh-run.txt`, 419
+lines from a 98 025-gaussian splat and 238 cameras in 18.15 s — and it corrects what this
+section previously carried. Every line is `[meshing] <phase>: <detail>`, and the phases,
+in the order they first appear, are `loading`, `point cloud`, **`Delaunay`**, `occupancy`,
+`cut edges`, `bisection`, `marching tets`, `merge`, `cull unseen`, `cleanup`, `quality`,
+`orient`, `texel density`, **`UV`**, `bake`, `color`, `texture`, `stats`, `wrote`, `done`.
+
+Three things about that channel decide how it is parsed:
+
+- **There are three camera loops, not one.** `occupancy`, `texel density` and `color` each
+  print `cameras rendered: N/238`, every fourth camera. Together they are **360 of the
+  419 lines** — 86 % of the run — against a 500-line LiveLog, which is §12's
+  `_EXTRACT_NOISE` problem again. `step_mesh` keeps only the line that closes each block
+  and rides the bar on the rest with an **empty message**, which `websocket.broadcast`
+  omits from the payload and the store therefore never logs. 419 lines in, 65 out,
+  replayed against this capture to prove it.
+- **The phases are not monotone.** `merge`, `cull unseen` and `cleanup` each run twice,
+  and `bisection` re-evaluates the occupancy grid once per iteration — so 180 consecutive
+  `occupancy:` counter lines appear *inside* the bisection phase. A phase therefore only
+  ever moves the bar forwards, or a run would go backwards three times.
+- **The numbers are on four lines.** `stats:` carries vertices, faces, components and the
+  boundary / non-manifold / mis-oriented edge tallies; `bake:` carries
+  `covered texels: 4490440/16777216 (26.8%)` and the finished texture size; `UV:` names
+  the size when `--texture-size 0` chose it; `done:` carries the total seconds. They go to
+  `mesh/mesh_result.json`, for the same reason steps 3 and 4 write theirs.
 
 ### 7.9 The 3D viewer (steps 3, 4 and 5)
 
@@ -828,6 +899,7 @@ decimated binary copy into `projects/<slug>/preview/`, served by the `/static` m
 |---|---|---|---|
 | gaussians (`f_dc_*`, `opacity`, `scale_*`, `rot_*`) | `.splat` | 32 B | `@mkkellogg/gaussian-splats-3d`, sorted and alpha-blended |
 | plain cloud | `.pc3d` (ours) | 16 B — 3 float32 + rgba | `THREE.Points` |
+| glTF mesh (`.glb` / `.gltf`) | **none — the source is served** | — | `GLTFLoader`, which ships inside `three` |
 
 - **The renderer is chosen from what the file *is*, not from which step asked.**
 - **Decimation is a uniform spread, never a head slice.** A PLY is not shuffled; the
@@ -841,7 +913,16 @@ decimated binary copy into `projects/<slug>/preview/`, served by the `/static` m
   is a thread call starting with a cancellation checkpoint, so any aborted download leaks
   the handle until the server exits.
 - **`.splat` and `.pc3d` are registered as `application/octet-stream`**, or `StaticFiles`
-  serves them as `text/plain; charset=utf-8`.
+  serves them as `text/plain; charset=utf-8`. `.glb` and `.gltf` are registered too —
+  `model/gltf-binary` and `model/gltf+json` — rather than left to the platform registry,
+  which on Windows answers whatever 3D application last wrote there.
+- **The mesh is the one source with no preview file at all.** There is no record format
+  to decimate a textured glb into, and it is small next to what it came from: the
+  reference mesh was **11.6 MB** against the 24 MB splat and the 178 MB one before that.
+  So `preview.status` reports it `ready` immediately with `url == source_url`, and none of
+  the fingerprint / stamp / prune bookkeeping applies. Only glTF is offered: a
+  `--format ply` mesh would be read by the PLY parser as a plain cloud and drawn as its
+  vertices, which is a different picture rather than a cheaper one.
 
 **The camera overlay** reads `sfm/sparse/0/images.bin` (§7.1: binary, not text). Frustums
 are coloured per sequence and the path breaks at each cut. Everything in the view sits in
@@ -869,16 +950,42 @@ width and height come before the parameters, so the aspect survives even then.
 `points3D.bin` reports nothing to preview instead of feeding the parser a stub; `train` is
 the **highest** `step-*.ckpt` under `train/`, globbed rather than assumed, because
 `--save-only-latest-checkpoint` defaulting to 1 is the tool's default and not a promise
-(§7.6). Step 5's mesh is deliberately not a source — see §13.6.
+(§7.6). `mesh` is `.glb` before `.gltf` under `mesh/`, and nothing at all if the run was
+asked only for PLY or OBJ.
 
-**Step 5's mesh is an open question** (§13): a textured mesh is neither a point cloud nor
-a splat, so it is either a third renderer (three.js loads glTF natively — `GLTFLoader`
-ships with `three`, so no §10 row) or a thumbnail. Not decided.
+**Step 5's mesh gets the third renderer, and it is JB's call taken on 2026-08-28.**
+`GLTFLoader` ships inside `three`, so it costs no dependency and no §10 row. `MeshCanvas`
+hangs the loaded glTF off the same scene root as the other two canvases and takes the same
+single `Rx-90`: the mesh is extracted from the splat and coloured by the same cameras, so
+it is in the frame §7.3 measured. Three things it does that the other canvases do not —
+a **headlight** on the camera plus ambient, because a textured glb comes out of the loader
+with a PBR material and an unlit scene renders it black; `DoubleSide` on every material,
+because `--cull-unseen` leaves 63 000 boundary edges and a backface-culled hole is a black
+hole; and a **wireframe toggle**, because a surface that looks solid and a surface that is
+solid are the same picture until you see the edges. The level selector is hidden for it —
+there is nothing decimated to open instead.
 
 ### 7.10 Step 6 — export + scene
 
-Blender, `blender_splatforge.py`, inherited unchanged. Steps 5 and 6 share `export/`, so
-resetting 5 takes 6 with it — the same rule as `3DGS_App_26` §14.1.
+Blender, `blender_splatforge.py`, inherited. Steps 5 and 6 share `export/`, so resetting 5
+takes 6 with it — the same rule as `3DGS_App_26` §14.1.
+
+**`export/` is filled by step 5's second half, and it holds hard links.** `step_export`
+takes step 4's `train/run/step-*.ckpt/splat.ply` and step 5's `mesh/` outputs — not
+`lfs_output/`, which went with LichtFeld Studio — and links rather than copies them, on
+`step_conform._link_or_copy`'s argument one step later: the reference splat is 178 MB and
+`export/` would otherwise be a second copy of bytes that already exist. It is safe both
+ways round — a step 5 reset drops `export/` and leaves `train/` holding the splat, a step 4
+reset drops `train/` and leaves `export/` holding the bytes — and nothing in the app ever
+writes *into* an exported file. It does **not** reset step 5 itself: `run_mesh` already
+did, before it wrote a byte, and a second reset would delete the mesh it is exporting.
+
+**Step 6 asks for the splat by name, not by glob.** With `mesh --format ply` the export
+holds `mesh.ply` too and it sorts first, so the predecessor's `glob("*.ply")[0]` would hand
+Blender a surface mesh to import as a gaussian cloud. `find_export_splat` is the one that
+knows. The README it writes lost its `{supersplat_url}` placeholder in the same commit:
+`supersplat_url` left `config.json` with the two CUDA tools, and reading it raised
+`AttributeError` on every step 6 — *after* Blender had already run.
 
 ---
 
@@ -931,8 +1038,10 @@ GET    /api/version/                   app name, version (commit date) and commi
 GET    /api/files/{project}/frames     frame list + curation verdicts
 GET    /api/files/{project}/analysis   scores.json + selection.json + overrides
 GET    /api/files/{project}/sources    input/ listing: probe + poster frame per video
-GET    /api/files/{project}/masks      what masks/ holds and where they came from
+GET    /api/files/{project}/masks      what masks/ holds, plus the last sam run's report
+GET    /api/files/{project}/geometry   what sfm/{normals,depths}/ hold + the last run
 GET    /api/files/{project}/train      train_result.json + what --data and --image-dir will read
+GET    /api/files/{project}/mesh       mesh_result.json + the checkpoint and cameras step 5 will read
 GET    /api/files/{project}/preview    3D preview state (?source=sfm|train|mesh&max_count=)
 POST   /api/files/{project}/preview    build that preview — returns at once, poll the GET
 GET    /api/files/{project}/cameras    camera poses of the last reconstruction, for the overlay
@@ -963,7 +1072,7 @@ invoked as **subprocesses**, never linked.
 | Blender | GPL, external | ✅ subprocess only, never bundled |
 | **SAM 2.1 checkpoint** (via `spirula sam`) | **Apache-2.0** | ⚠ never bundled; downloaded on first use into `%LOCALAPPDATA%\spirula-studio\models\`. Terms shown in the UI before the first fetch (§7.4) |
 | **SAM 3 checkpoint** (via `spirula sam`) | **Meta's own, non-standard** | ⚠ never bundled; same route, and the licence is *not* Apache — it must be shown and accepted distinctly from SAM 2.1's |
-| **MoGe / Metric3D checkpoints** (via `spirula geometry`) | to be confirmed per model | ⚠ downloaded from HuggingFace on first use (`moge2-vitb-normal.onnx`, 419.4 MB). **Not yet audited — §13** |
+| **MoGe / Metric3D checkpoints** (via `spirula geometry`) | to be confirmed per model | ⚠ downloaded from HuggingFace on first use — measured 2026-08-28: `moge2-vitb-normal.onnx`, 419.4 MB, from `huggingface.co/Ruicheng/moge-2-vitb-normal-onnx`, cached in `%LOCALAPPDATA%\spirula-studio\models\`. **Not yet audited — §13.5.** The step names the URL and says so before it fetches |
 | React / Vite / Tailwind / shadcn/ui / Zustand / recharts | MIT | ✅ ok |
 | three.js (`three`, `@types/three`) | MIT | ✅ ok — the 3D viewer (§7.9) |
 | `@mkkellogg/gaussian-splats-3d` | MIT | ✅ ok — the sorted splat rasteriser (§7.9) |
@@ -1032,6 +1141,16 @@ Any new dependency → add a row here in the same commit.
 | 2026-08-28 | **A working fps too low to place one frame in the source is refused before the run, because FFmpeg does not extract zero frames — it fails.** A project left `fps_mode: absolute` at **0.001** against a 139.21 s rush asked for one frame every 1000 s, and FFmpeg answered `[vost#0:0/mjpeg] Task finished with error code: -22 (Invalid argument)` / `Nothing was written into output file, because at least one of its streams received no packets` and exited non-zero, so step 2 died on an `-22 Invalid argument` tail that names nothing the user set. Measured on that same 3840x2880 h264 source: `fps=0.02` over 20 s wrote nothing and exited non-zero, the identical filter over 60 s wrote one frame and exited 0 — the `fps` filter samples at the centre of each period, so a run needs roughly `duration >= 1/(2*fps)`. `check_fps_yields_frames` refuses `fps x duration < 1` naming the fps that would work, and the panel's estimate turns amber at the same threshold instead of quietly reading `= 0 frames`. **The probe and the fps resolution moved above `_clear_previous_run`** for it: the check has to run before the reset or an unusable setting deletes the frames it cannot re-extract, which is §14.1's rule and the exact trap `resolve_ffmpeg_path` was hoisted out of on 2026-08-24. |
 | 2026-08-28 | **The `-hwaccel` fallback explains itself where it happens, because a step that fails afterwards never reaches the end of the run.** The same project's log ended on `decoder->cvdl->cuvidCreateDecoder(...) failed -> CUDA_ERROR_INVALID_VALUE` / `Failed setup for format cuda`, in red, and that is what got reported as the cause of a failure that was really the fps above. §6.1 already had the measurement — FFmpeg treats `-hwaccel` as a preference and decodes in software — and it was re-confirmed on this source: 3 s at `-hwaccel cuda`, same NVDEC refusal, **exit 0 with correct frames**, software fallback at 1.41x. The reassurance was only broadcast *after* a successful run, i.e. never on the runs that need it. It now goes out on the first `_HWACCEL_FAILED` line instead, and `extract.json` keeps `hwaccel_fell_back` as before. |
 
+| 2026-08-28 | **Step 5's phase list was captured whole rather than remembered, and it corrected three things this file already said.** `docs/spirula/mesh-run.txt`: 419 lines, 98 025 gaussians and 238 cameras in **18.15 s**, exit 0, `mesh.glb` 11.6 MB, 78 670 vertices / 84 166 faces / 5111 components, a 4096 px texture at 26.8 % texel coverage. §7.8 had listed the phases from inference and was wrong in three ways. **`Delaunay` and `UV` are phases** and were missing. **There are three camera loops, not one** — `occupancy`, `texel density` and `color` — and together they are **360 of the 419 lines**, 86 % of the run, against a 500-line LiveLog: the same trap `_EXTRACT_NOISE` was written for on 2026-08-27, so `step_mesh` keeps the line that closes each block and rides the bar on the other 354 with an **empty message**, which `websocket.broadcast` omits from the payload and the store therefore never logs (419 in, 65 out, replayed against the capture). And **the phases are not monotone**: `merge`, `cull unseen` and `cleanup` each run twice, and `bisection` re-evaluates the occupancy grid once per iteration, so 180 consecutive `occupancy:` counter lines land *inside* `bisection` — a phase therefore only ever moves the bar forwards, or a run would go backwards three times. The bar was watched over a real run: **monotone, 0.00 → 0.99, 423 points**. The measurement was cheap and the guess would have been free; the guess was wrong. |
+| 2026-08-28 | **The mesh gets the third renderer — JB's call, and §13.6 closes.** `GLTFLoader` ships inside `three`, so it costs no dependency and no §10 row, and `MeshCanvas` hangs the glTF off the same scene root as the other two canvases under the same single `Rx-90`: the mesh is extracted from the splat and coloured by the same cameras, so §7.3's measurement covers it too. **It is also the one preview source with no preview file** — there is no record format to decimate a textured glb into, and it is small next to what it came from (11.6 MB against a 24 MB splat, and the reference run's 29.9 MB against 247 MB) — so `preview.status` reports it ready with `url == source_url` and skips every piece of fingerprint / stamp / prune bookkeeping. Only glTF is offered: a `--format ply` mesh would be read by the PLY parser as a plain cloud and drawn as its vertices, which is a different picture rather than a cheaper one. Three canvas details that are not decoration — a **headlight plus ambient**, because a textured glb arrives with a PBR material and an unlit scene renders it black; **`DoubleSide`**, because `--cull-unseen` left 63 326 boundary edges and a backface-culled hole is a black hole; and a **wireframe toggle**, because a surface that looks solid and one that is solid are the same picture until you see the edges. |
+| 2026-08-28 | **`export/` holds hard links, and step 6 asks for the splat by name.** `step_export` scanned `lfs_output/`, a directory that went with LichtFeld Studio — it now takes step 4's `train/run/step-*.ckpt/splat.ply` and step 5's `mesh/` outputs through the same finders those steps use, and **links** rather than copies them: the reference splat is 178 MB and `export/` would otherwise be a second copy of bytes that already exist, which is `step_conform._link_or_copy`'s argument one step later. Verified on a real run — `nlink 2`, same bytes — and safe both ways round, because a step 5 reset drops `export/` and leaves `train/`, a step 4 reset drops `train/` and leaves `export/`, and nothing in the app writes *into* an exported file. It no longer resets step 5 either: `run_mesh` already did that before writing a byte, and a second reset would have deleted the mesh it was being asked to export. Two live bugs went with it: `glob("*.ply")[0]` would hand Blender `mesh.ply` — which sorts before `splat.ply` — to import as a gaussian cloud, and the README's `{supersplat_url}` placeholder raised `AttributeError` on every step 6 *after* Blender had already run, because `supersplat_url` left `config.json` with the two CUDA tools. |
+
+| 2026-08-28 | **`spirula geometry` does not resolve images outside the dataset folder, so P3 ships the junction §13.1 said this could force — and it lives only for the length of the run.** There is no `--image-dir` on this tool. Pointed at `<project>/sfm` with the images in the sibling `<project>/frames`, it resolved `<project>/sfm\imagesrame_0001.jpg`, answered `can't fopen` and `skipping` for all 238, and finished `done: 0 written, 0 already there, in 0s` at **exit 0** — a silent, total failure. With `sfm/images` junctioned to `frames/` the identical command wrote **238 normal maps in 35 s** at `--max-size 512`, 55 MB. Both runs are in `docs/spirula/geometry-run.txt`. The junction is created before the command and removed in a `finally`, so **§5's layout on disk is exactly what §5 says it is**: no `copytree`, no `rmtree`, no zip and no `find_model` ever meets one, and there is still one copy of the frames. A Windows junction needs neither administrator rights nor Developer Mode, unlike `os.symlink`, and `os.rmdir` removes it leaving the target intact — verified before it was relied on, because getting it wrong deletes `frames/`. Two consequences beyond the layout: **exit 0 is not success here**, so the step judges `done: N written` and the folder rather than the return code; and the 419.4 MB `curl` fetch is a **child process**, so abort was tested on it — `curl.exe` and `spirula.exe` both gone from the process table, `ProcessAborted` not `error`, junction removed, frames intact. |
+| 2026-08-28 | **A mask pairs to its frame by basename *and* by COLMAP's `.jpg.png`, and `sam mask` itself writes the basename form — §13.3 closes, and so does §13.4 for `--mask-dir`.** Both had been open since P1.6 put `--mask-dir <project>/masks` on the live command line on nothing but an argument from symmetry. `sfm extract --masks` over 20 frames dropped **16 929** keypoints "over masked images: 20", 88 230 → 71 301 features, and the COLMAP naming gave the byte-identical result — so the two conventions are interchangeable and what step 2's alpha extraction already writes is right. `sfm auto` prints `Masks: <dir>\masks` **with no flag passed** and drops that line under `--no-masks`, which is §5.2's automatic adoption seen rather than inferred. And `train --mask-dir` does take an absolute path outside `--data`: three 200-iteration runs each way, psnr **15.12 / 17.48 / 15.18** masked against **22.40 / 22.68 / 20.33** with a path that does not exist — not deterministic, but disjoint by ~2.9 dB, which is masked corners trained as empty space. **The negative control is the finding worth keeping: a wrong `--mask-dir` exits 0 and trains unmasked**, because `--load-masks` is "use the dataset's masks when they exist". Step 4 logs the mask count for exactly that reason. `docs/spirula/sam-mask-run.txt`. |
+| 2026-08-28 | **`sam` and `geometry` attach to a wizard step without ever marking it done, and that is a correction rather than a decision.** The inherited `run_mask_generation` set `step_status["3"] = "done"` on success — so writing 238 mask PNGs would have put a green tick on a reconstruction that had never been run, and a *failed* mask pass would have painted a finished one red. Curation earns `/analyze`'s treatment because it really is the second phase of step 2; masking and geometry do not, because a mask run produces no reconstruction and a geometry run produces no splat. `_run_attached_pass` captures the step's prior status and hands it back — on success, on abort and on error alike — and only the run's own name (`masks`, `geometry`) carries live state to the LiveLog and the bar, which the store already mapped to steps 3 and 4. `masks/` stays step 2's directory in §14.1's table for the same reason: it is an input to the reconstruction, not an output of it. |
+| 2026-08-28 | **Two more channels join `_EXTRACT_NOISE`'s rule, and one of them is this tool family's only CR-redrawn bar.** The failing geometry run printed **476 of its 483 non-bar lines** as one `load_image: cannot read` / `skipping` pair per image, against a 500-line LiveLog; they are counted rather than logged, and the count *is* the finding the step reports. The 419.4 MB checkpoint fetch arrives as **703 CR fragments** through `iter_lines`, which is the §15.1 defect `proc.iter_lines` was kept for — they ride their own 0.02→0.20 stretch of the bar with an empty message, which `websocket.broadcast` omits from the payload. Measured over a real run: monotone 0.00 → 0.99, 250 lines to the bus, none of them a bar fragment. `sam mask` needed the opposite treatment: **two lines for the whole run and no counter**, 238 frames in 2.6 s, so its bar is its two ends and `ProgressBar`'s indeterminate fallback covers the middle. |
+| 2026-08-28 | **A `--normal-format` switch writes the new maps beside the old rather than over them, so the run says so.** A `png` run followed by a `jpg` one left `sfm/normals/` holding **476 files for 238 frames**: `--overwrite` is about recomputing a map, not about a file whose name no longer matches. Which of the two `train --normal-dir` then reads is not something to guess at on the user's behalf, so `step_geometry` counts the other format and names it, in the log and in `geometry_result.json`. The same reasoning put `mask_result.json` in `analysis/` rather than in `masks/`: §5 says `masks/` holds one greyscale PNG per frame, and it is a directory both `sfm auto` and `train` are pointed at. |
+
 Any new structural decision → add a row here in the same commit.
 
 ---
@@ -1041,10 +1160,12 @@ Any new structural decision → add a row here in the same commit.
 Prioritised worklist lives in [TODO.md](TODO.md). This file is the spec; that one is what
 comes next. The genuinely open questions, in the order they block something:
 
-1. **Does `spirula geometry` resolve images outside the dataset folder?** (§7.5) The one
-   thing that could force a junction into §5's layout. The verification run read the
-   dataset (`251 images, 2 cameras`) and was then killed during the 419 MB checkpoint
-   download, so this is unmeasured. Finish the download and re-run.
+1. ~~**Does `spirula geometry` resolve images outside the dataset folder?**~~ **Settled
+   2026-08-28: no, and the junction it was said to threaten is what P3 shipped.** There is
+   no `--image-dir` on this tool; it resolved `<dataset>\images\<name>`, skipped all 238
+   images and finished `done: 0 written` at **exit 0**. `step_geometry` junctions
+   `sfm/images` to `frames/` for the length of the run and removes it in a `finally`, so
+   nothing else in the app ever meets one and §5's layout is unchanged. §7.5.
 2. **A curation verdict is advisory, and that is a consequence nobody chose.** Step 3
    is handed the image *directory*, and §5.2's whole point is that there is no second,
    filtered copy of the frames anywhere — step 4 trains on the same `frames/`. So
@@ -1055,21 +1176,26 @@ comes next. The genuinely open questions, in the order they block something:
    `frames/_rejected/` in step 2 (a move, not a copy, so §5.2 survives intact, and it
    is reversible); or accept them and rely on the mapper's own rejection. Nothing is
    implemented until that is decided.
-3. **Do `sfm auto` and `train` pair a mask to its frame by basename or by full
-   filename?** `masks/` holds `frame_0001.png` beside `frames/frame_0001.jpg`, which is
-   what step 2's alpha extraction writes and what LichtFeld Studio read; COLMAP's own
-   convention is `frame_0001.jpg.png`. Unmeasured — the reference runs had an empty
-   `masks/`, so `--no-masks` was sent and the question never arose. Cheap to settle with
-   one masked run, and until then step 3 says in the log which convention it assumed.
-4. **Are `--mask-dir`, `--depth-dir` and `--normal-dir` absolute-path-capable like
-   `--image-dir`?** (§5.2) Assumed by symmetry from their identical help text; not
-   measured. Cheap to settle.
-5. **The MoGe / Metric3D checkpoint licences** (§10). Downloaded from HuggingFace, not
-   yet audited, and the audit table says so rather than guessing.
-6. **Does step 5's mesh get its own viewer mode, or a thumbnail?** (§7.9) A textured mesh
-   is neither a point cloud nor a splat. `GLTFLoader` ships inside `three`, so a third
-   renderer costs no dependency — but it does cost a third code path in the viewer.
-   Undecided, and JB's call.
+3. ~~**Basename or full filename for a mask?**~~ **Settled 2026-08-28: both, and
+   `sam mask` itself writes the basename form.** `sfm extract --masks` over 20 frames
+   dropped **16 929** keypoints "over masked images: 20", 88 230 → 71 301 features, and the
+   COLMAP convention `frame_0001.jpg.png` gave the byte-identical numbers. `sfm auto` also
+   prints `Masks: <dir>\masks` with no flag passed, and `--no-masks` removes that line —
+   so the automatic adoption of §5.2 is seen rather than inferred.
+   `docs/spirula/sam-mask-run.txt`.
+4. **`--mask-dir` is absolute-path-capable — settled 2026-08-28 (§5.2).** Six
+   200-iteration runs, three each way, psnr bands disjoint by ~2.9 dB. `--depth-dir` and
+   `--normal-dir` remain assumed by symmetry and are **not on the live path**, since
+   `sfm/depths` and `sfm/normals` are inside `--data`. What the runs also turned up is
+   worth more than the answer: **a wrong `--mask-dir` exits 0 and trains unmasked.**
+5. **The MoGe / Metric3D checkpoint licences** (§10). Still open, and now on a live path:
+   the default fetch is `moge2-vitb-normal.onnx`, 419.4 MB, from
+   `huggingface.co/Ruicheng/moge-2-vitb-normal-onnx`. The step names the URL and says the
+   licence is unaudited before it runs; the audit itself is still owed.
+6. ~~**Does step 5's mesh get its own viewer mode, or a thumbnail?**~~ **Settled
+   2026-08-28: the third renderer.** `GLTFLoader` ships inside `three`, so it costs no
+   dependency and no §10 row; `MeshCanvas` is §7.9. The mesh has no decimated preview
+   either — the file the tool wrote is what loads.
 7. **The WS bus carries no project id, so the store applies every message to whatever
    project is open.** Seen in P1.7: step 4 of the reference project displayed a second
    project's bar at 56 % with a live ETA. `/api/pipeline/start` refuses a second run
@@ -1152,11 +1278,11 @@ channel **measured on this workstation**, or says it has none.
 | 2 extract | FFmpeg `-progress pipe:1 -nostats` — `key=value` blocks on stdout, ~2/s | `out_time_us` against `probe.json`'s `duration_s`; `max_frames` too when capped, whichever is further along |
 | 2 conform | FFmpeg `-progress pipe:1` over the image sequence — `frame=` | the image count, which is exact (§6.7) |
 | 2 curate | `step_analyze._chunked`, every 24 frames | frame count |
-| 2/3 masks | `spirula sam` stdout | per-frame, for `track`; `mask` is a single short pass |
+| 2/3 masks | `spirula sam` stdout | `track` prints a per-frame counter; **`mask` prints two lines and no counter at all** — measured, 238 frames in 2.6 s, so its bar is its two ends |
 | 3 SfM | `spirula sfm auto` stdout, tagged and live (§7.2) | `[extract] N/total`, then `[map] images in the model: N` |
-| 4 geometry | `spirula geometry` stdout; the **checkpoint download is a CR-redrawn bar** (§7.5) | per-image |
+| 4 geometry | `spirula geometry` stdout, `N / M images, T ms each, R left`; the **checkpoint download is a CR-redrawn `curl` bar** (§7.5), several hundred fragments per fetch, dropped from the bus and ridden as its own 0.02→0.20 stretch | per-image, 0.22→0.99 |
 | 4 train | the `step N/M` line, every 100 steps, CRLF, unbuffered (§7.7) | `N/M`, mapped onto 5–95 % |
-| 5 mesh | `spirula mesh` stdout, `[meshing] <phase>:` (§7.8) | `color: cameras rendered: N/total` for the long phase; the others are named, not counted |
+| 5 mesh | `spirula mesh` stdout, `[meshing] <phase>:` (§7.8) | `cameras rendered: N/total` inside each of the three camera loops; the other phases are named, not counted, and the ladder never moves backwards |
 
 ### 15.1 The carriage return, and why `proc.iter_lines()` is still here
 
@@ -1188,9 +1314,11 @@ hypothetical.
 
 ### 15.3 Where the bars are flat, and the honest fallback
 
-- **`spirula mesh`'s non-`color` phases.** 204 s in the reference run, of which the
-  countable camera loop is one part and `texture` alone is 30.9 s. The phases are named
-  in the log, so the step can report *which* phase rather than a false percentage.
+- **`spirula mesh`'s uncounted phases.** 204 s in the reference run, of which the three
+  camera loops are one part and `texture` alone was 30.9 s. `merge` was the single
+  longest phase of the 18 s capture (6.2 s of it) and it prints no denominator at all.
+  The phases are named in the log, so the step reports *which* phase and rests the bar on
+  that phase's floor rather than inventing a percentage inside it.
 - **The curation fallback paths** — a forced `cut_source: "video"`, or the automatic
   fallback when the scdet scores are missing or truncated — where the source is decoded
   again and `progress_cb` is wired only into `detect_from_frames`.

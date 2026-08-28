@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Boxes, Camera, Download, FlipVertical2, RefreshCw, RotateCcw, Route,
+  Boxes, Camera, Download, FlipVertical2, Grid3x3, RefreshCw, RotateCcw, Route,
   Maximize2, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { useDefaults } from '@/hooks/useDefaults';
 import { useCameras, usePreview } from '@/hooks/usePreview';
 import PointCloudCanvas from './PointCloudCanvas';
 import SplatCanvas from './SplatCanvas';
+import MeshCanvas from './MeshCanvas';
 import type { PreviewSource } from '@/types';
 
 /**
@@ -17,6 +18,12 @@ import type { PreviewSource } from '@/types';
  * It picks the renderer from what the file *is*, not from which step asked:
  * a step can produce either a plain sparse cloud or a gaussian PLY, so keying
  * the viewer on the step number would sometimes pick the wrong renderer.
+ *
+ * Three renderers now — `PointCloudCanvas`, `SplatCanvas` and `MeshCanvas` —
+ * and the third one is the odd one out in exactly one way: a glTF mesh has no
+ * decimated preview to open at a level, because there is no record format to
+ * decimate it into, so the level selector is hidden for it and the file the
+ * tool wrote is what loads (`core/preview.py`).
  *
  * There is no per-source frame correction any more. The sparse cloud, the
  * trained splat and the camera overlay are all in one +Z-up frame — measured,
@@ -64,6 +71,7 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [viewNonce, setViewNonce] = useState(0);
   const [upFlipped, setUpFlipped] = useState(false);
+  const [wireframe, setWireframe] = useState(false);
 
   // Hydrate from defaults.json once it lands; the state above is the pre-fetch
   // placeholder, exactly like the Advanced panels do it (CLAUDE.md §4).
@@ -123,6 +131,7 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
 
   const cameraPoses = cameras?.available ? cameras.cameras : null;
   const isSplat = state?.kind === 'splat';
+  const isMesh = state?.kind === 'mesh';
   const building = Boolean(state?.building);
   const canvasKey = `${state?.url ?? 'none'}#${viewNonce}`;
 
@@ -152,6 +161,8 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
     <div className="flex flex-col gap-2">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
+        {/* No levels for a mesh: there is nothing decimated to open instead. */}
+        {!isMesh && (
         <div className="flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 p-0.5">
           {levels.map((value) => (
             <button
@@ -170,6 +181,20 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
             </button>
           ))}
         </div>
+        )}
+
+        {isMesh && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setWireframe((v) => !v)}
+            className={`gap-1 text-xs ${wireframe ? 'text-cyan-400' : 'text-slate-500'}`}
+            title="Draw the triangles. A surface that looks solid and a surface that is solid are the same picture until you see the edges"
+          >
+            <Grid3x3 className="w-3.5 h-3.5" />
+            Wireframe
+          </Button>
+        )}
 
         {cameraPoses && (
           <>
@@ -195,7 +220,7 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
           </>
         )}
 
-        {!isSplat && (
+        {!isSplat && !isMesh && (
           <label className="flex items-center gap-2 text-xs text-slate-500">
             Point size
             <input
@@ -259,7 +284,25 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
                    [&:fullscreen]:rounded-none [&:fullscreen]:border-0"
         style={{ height: fullscreen ? '100%' : height }}
       >
-        {state.ready && state.url && !isSplat && (
+        {state.ready && state.url && isMesh && (
+          <MeshCanvas
+            key={canvasKey}
+            url={state.url}
+            background={viewerDefaults?.background ?? '#0b1220'}
+            cameras={cameraPoses}
+            showCameras={showCameras}
+            showPath={showPath}
+            flipUp={upFlipped}
+            fovX={cameras?.fov_x}
+            aspect={cameras?.aspect}
+            wireframe={wireframe}
+            onProgress={(loaded, total) =>
+              setLoadPercent(total ? (loaded / total) * 100 : null)}
+            onLoaded={() => setLoadPercent(null)}
+            onError={setLoadError}
+          />
+        )}
+        {state.ready && state.url && !isSplat && !isMesh && (
           <PointCloudCanvas
             key={canvasKey}
             url={state.url}
@@ -332,9 +375,19 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
       {/* Footer */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
         <span className="text-slate-400">
-          {state.kind === 'splat' ? 'Gaussian splat' : 'Point cloud'}
+          {state.kind === 'splat' ? 'Gaussian splat'
+            : state.kind === 'mesh' ? 'Textured mesh'
+            : 'Point cloud'}
         </span>
-        {state.count !== undefined && state.total !== undefined && (
+        {/* A mesh reports its vertex count off `mesh_result.json` and can
+            legitimately report 0 — an older run predates the field. */}
+        {isMesh && (
+          <span>
+            {state.total ? `${state.total.toLocaleString()} vertices` : 'vertex count unknown'}
+            {state.bytes ? ` · ${formatBytes(state.bytes)}` : ''}
+          </span>
+        )}
+        {!isMesh && state.count !== undefined && state.total !== undefined && (
           <span>
             {state.count.toLocaleString()}
             {state.decimated && ` of ${state.total.toLocaleString()}`}

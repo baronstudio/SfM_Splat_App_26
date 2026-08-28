@@ -50,11 +50,13 @@ def _abort_checker(project_id: str):
     return lambda: bool(_abort_flags.get(project_id))
 
 
-# Step 3 has two runs and they report under two names: the alignment as `rc`,
-# the mask generation as `masks`. Both map to wizard step 3 in the frontend
-# store, the same shape as `curate` reporting into step 2 (CLAUDE.md §12,
-# 2026-08-20).
+# Two passes attach to a wizard step without being it: `spirula sam` reports as
+# `masks` into step 3 and `spirula geometry` as `geometry` into step 4. The
+# frontend store maps both, the same shape as `curate` reporting into step 2
+# (CLAUDE.md §12, 2026-08-20). Neither ever marks its step done — see
+# `_run_attached_pass`.
 MASK_STEP_NAME = "masks"
+GEOMETRY_STEP_NAME = "geometry"
 
 _STEP_NAMES: dict[int, str] = {
     1: "import",
@@ -549,47 +551,64 @@ async def run_analysis_only(project_id: str, settings: dict = {}) -> None:
 
 # ── Standalone mask generation ───────────────────────────────────────────────
 
-async def run_mask_generation(project_id: str, settings: dict = {}) -> None:
-    """Generate RealityScan's own masks from the saved alignment (TODO P4).
+async def _run_attached_pass(
+    project_id: str,
+    settings: dict,
+    *,
+    step: int,
+    name: str,
+    runner,
+    opening: str,
+    label: str,
+) -> None:
+    """One re-runnable pass that *attaches* to a wizard step without being it.
 
-    A second RealityScan process over step 3's `.rsproj`, not a longer step 3:
-    the mesh is minutes and re-aligning to change a mask is unacceptable, which
-    is the same argument `run_analysis_only` above makes for curation
-    (CLAUDE.md §6.3). It drives `step_status["3"]` because that is the wizard
-    step it belongs to, and broadcasts under the name `masks`, which the
-    frontend store maps to step 3 exactly as it maps `curate` to step 2.
+    `spirula sam` (step 3) and `spirula geometry` (step 4) are both this shape:
+    separately re-runnable so that changing a threshold never costs the
+    expensive phase, which is the argument `run_analysis_only` makes for
+    curation (CLAUDE.md §6.3, §7.4, §7.5).
+
+    **The wizard step's status is restored, never set to `done`.** This is the
+    one place these differ from `/analyze`, and it is not a detail: curation
+    really is the second phase of step 2 and finishing it finishes the step,
+    whereas a mask run produces no reconstruction and a geometry run produces no
+    splat. Marking step 3 `done` because `sam mask` wrote 238 PNGs would put a
+    green tick on a step that has never been run — so the prior status is
+    captured here and handed back, and only the run's own name carries the
+    live state to the LiveLog and the bar.
     """
     project = _get_project(project_id)
     if not project:
-        await broadcast(MASK_STEP_NAME, "ERROR", f"Project {project_id} not found")
+        await broadcast(name, "ERROR", f"Project {project_id} not found")
         return
 
     project_path = PROJECTS_DIR / project.slug
     settings = _with_project_settings(project, settings)
     step_status = project.get_step_status()
+    key = str(step)
+    # What the wizard step was before this pass, to be handed back afterwards.
+    # `pending` is the honest answer for a step that has never run, and it is a
+    # value the store accepts explicitly.
+    previous = step_status.get(key, "pending")
 
     _abort_flags[project_id] = False
     pause_event = asyncio.Event()
     pause_event.set()
     _pause_events[project_id] = pause_event
 
-    _debug(f"run_mask_generation CALLED — project='{project.name}' ({project_id})")
+    _debug(f"{label} CALLED — project='{project.name}' ({project_id})")
 
     try:
-        step_status["3"] = "running"
+        step_status[key] = "running"
+        _update_project(project_id, _step_status_dict=step_status)
+        await broadcast(name, "INFO", opening, status="running")
+
+        await runner(project_path, broadcast, settings)
+
+        step_status[key] = previous
         _update_project(project_id, _step_status_dict=step_status)
         await broadcast(
-            MASK_STEP_NAME, "INFO",
-            "▶ Generating masks from the reconstruction region…",
-            status="running",
-        )
-
-        await _run_masking(project_path, broadcast, settings)
-
-        step_status["3"] = "done"
-        _update_project(project_id, _step_status_dict=step_status)
-        await broadcast(
-            MASK_STEP_NAME, "SUCCESS", "✔ Mask generation complete.", status="done"
+            name, "SUCCESS", f"✔ {label} complete.", status=previous
         )
 
     except (ProcessAborted, asyncio.CancelledError) as exc:
@@ -597,27 +616,63 @@ async def run_mask_generation(project_id: str, settings: dict = {}) -> None:
         # ProcessAborted, and the hard task.cancel() the /control route fires.
         # CancelledError derives from BaseException, so naming it is what stops
         # the step from being stuck on "running" until a page reload.
-        _debug(f"  → run_mask_generation ABORTED for project {project_id}")
-        step_status["3"] = "aborted"
+        _debug(f"  → {label} ABORTED for project {project_id}")
+        step_status[key] = previous
         _update_project(project_id, _step_status_dict=step_status)
         await _broadcast_best_effort(
-            MASK_STEP_NAME, "WARNING", "■ Mask generation aborted by user.",
-            status="aborted",
+            name, "WARNING", f"■ {label} aborted by user.", status="aborted",
         )
         if isinstance(exc, asyncio.CancelledError):
             raise
 
     except Exception as exc:  # noqa: BLE001 — surfaced to the user verbatim
         exc_detail = f"[{type(exc).__name__}] {exc}" if str(exc) else type(exc).__name__
-        _debug(f"  → run_mask_generation ERROR: {exc_detail}")
-        step_status["3"] = "error"
-        _update_project(project_id, error_message=exc_detail, _step_status_dict=step_status)
+        _debug(f"  → {label} ERROR: {exc_detail}")
+        # The wizard step is not in error — this pass is. Restoring it keeps a
+        # failed mask run from painting a finished reconstruction red.
+        step_status[key] = previous
+        _update_project(
+            project_id, error_message=exc_detail, _step_status_dict=step_status
+        )
         await broadcast(
-            MASK_STEP_NAME, "ERROR", f"✖ Mask generation failed: {exc_detail}",
-            status="error",
+            name, "ERROR", f"✖ {label} failed: {exc_detail}", status="error",
         )
 
     finally:
         _abort_flags.pop(project_id, None)
         _pause_events.pop(project_id, None)
-        _demote_if_still_running(project_id, "mask generation exited")
+        _demote_if_still_running(project_id, f"{label} exited")
+
+
+async def run_mask_generation(project_id: str, settings: dict = {}) -> None:
+    """Write `masks/` with `spirula sam` — never a re-alignment (§7.4).
+
+    Attaches to wizard step 3 and broadcasts under the name `masks`, which the
+    frontend store maps to step 3 exactly as it maps `curate` to step 2. The
+    masks themselves belong to step 2's directory in §14.1's table: they are an
+    *input* to the reconstruction, so a step 3 reset must not take them and this
+    run must not claim step 3 is done.
+    """
+    await _run_attached_pass(
+        project_id, settings,
+        step=3, name=MASK_STEP_NAME, runner=_run_masking,
+        opening="▶ Writing masks with spirula sam…",
+        label="Mask generation",
+    )
+
+
+async def run_geometry_only(project_id: str, settings: dict = {}) -> None:
+    """Write `sfm/normals/` and `sfm/depths/` with `spirula geometry` (§7.5).
+
+    Attaches to wizard step 4, whose training run reads them through `--data`
+    with no flag. Never a re-training, and never a reset of `sfm/`: the maps sit
+    *inside* the dataset the run is reading, so clearing it would delete the
+    sparse model. A step 3 re-run is what takes them, and `step_sfm` says so
+    before it does (§14.1).
+    """
+    await _run_attached_pass(
+        project_id, settings,
+        step=4, name=GEOMETRY_STEP_NAME, runner=_run_geometry,
+        opening="▶ Estimating depth and normal maps with spirula geometry…",
+        label="Geometry supervision",
+    )

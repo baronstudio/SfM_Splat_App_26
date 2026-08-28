@@ -3,12 +3,16 @@
 Prioritised worklist. [CLAUDE.md](CLAUDE.md) is the spec; this is what comes next.
 Phases are ordered by what unblocks what, not by what is interesting.
 
-Status: **P1.1–P1.7 done** — a video goes in one end and a `splat.ply` comes out the
-other, from the UI, at real length, with the bar moving and abort working at every step.
-The P1.7 run: 79.5 s of 4K/100 fps 10-bit HEVC → 238 frames in **80.4 s** → 238/238
-registered at 0.341 px in **45.3 s** → 30 000 iterations in **956 s**, psnr 38.66, a
-716 831-gaussian `splat.ply`. Both viewers were finally looked at in a browser and both
-draw. Next: P2 (steps 5-6), with the three defects P1.7 turned up listed under it.
+Status: **P1 done, P2 done bar step 6 and one browser pass, P3 done bar `sam track`.** A video goes in one end
+and a `splat.ply` and a textured `mesh.glb` come out the other, from the UI, at real
+length, with the bar moving and abort working at every step. The P1.7 run: 79.5 s of
+4K/100 fps 10-bit HEVC → 238 frames in **80.4 s** → 238/238 registered at 0.341 px in
+**45.3 s** → 30 000 iterations in **956 s**, psnr 38.66, a 716 831-gaussian `splat.ply`.
+Step 5 on the throwaway project's 98 025-gaussian splat: **18.15 s**, 78 670 vertices,
+84 166 faces, a 4096 px texture at 26.8 % coverage, `mesh.glb` 11.6 MB, exit 0. P3 then
+shipped both re-runnable passes and settled three of P4's open questions on the way —
+`geometry` needs a junction, a mask pairs by basename, `--mask-dir` takes an absolute
+path. Next: **step 6**, which is still the one step never run since it was rewired.
 
 ---
 
@@ -234,35 +238,98 @@ delete it from the Projects list when its evidence has been read.**
 
 ## P2 — Mesh and scene (steps 5-6)
 
-- [ ] `step_mesh.py`: `spirula mesh <ckpt> --data <project>/sfm --output
-      <project>/mesh/mesh`. **`--output` is mandatory** — its default writes inside the
-      `.ckpt` directory the next training deletes (§12, 2026-08-27).
-- [ ] **Refuse PLY+texture and OBJ+vertex-colour in the UI**, before the run. The tool
-      exits 1 having written nothing at all, not even the formats it could have made.
-- [ ] Bar from `[meshing] color: cameras rendered: N/total`; name the other phases rather
-      than faking a percentage for them (§15.3).
-- [ ] Decide the mesh viewer question (§13.4) — third renderer or thumbnail. **JB's
-      call.**
-- [ ] `step_export.py` and `step_scene.py`: inherited, and steps 5/6 share `export/`.
+### P2.1 Step 5 — `step_mesh.py` ✅
+
+- [x] `spirula mesh <ckpt> --data <project>/sfm --output <project>/mesh/mesh`, with
+      `reset_steps(project, [5])` **after** the exe and the checkpoint are located.
+      **`--output` is mandatory** — its default writes inside the `.ckpt` directory the
+      next training deletes (§12, 2026-08-27). The checkpoint passed is the `splat.ply`
+      `find_splat` located, not the run directory.
+- [x] **Refuse PLY+texture and OBJ+vertex-colour before the run**, in the UI *and* in the
+      step. The tool exits 1 having written nothing at all, not even the formats it could
+      have made — verified that `run_mesh` raises before it touches `mesh/`.
+- [x] **The phase list captured whole** rather than inferred: `docs/spirula/mesh-run.txt`,
+      419 lines. It corrected §7.8 in three ways — `Delaunay` and `UV` were missing,
+      there are **three** camera loops and not one, and the phases are **not monotone**
+      (§12, 2026-08-28).
+- [x] Drop the camera counter from the bus — 360 of 419 lines, against a 500-line
+      LiveLog — and ride the bar on it with an empty message. 419 in, 65 out, replayed
+      against the capture. Bar watched over a real run: monotone, 0.00 → 0.99, 423 points.
+- [x] `mesh/mesh_result.json`: vertices, faces, components, the three edge tallies,
+      texture size, texel coverage, elapsed, the files on disk and what the tool said it
+      wrote. `GET /api/files/{id}/mesh` serves it with the checkpoint and cameras the run
+      will read.
+- [x] `MeshSettings.tsx` (shared with the setup panel's new Mesh section, so `meshRefusal`
+      exists once), `Step5_Mesh.tsx` with the input strip, the report panel and the
+      export listing.
+- [ ] **Not looked at in a browser.** Every part of it is verified server-side — the run,
+      the parse, the bar, the endpoints, the glTF header, the `model/gltf-binary` on
+      `/static` — and no human has watched `MeshCanvas` draw. Same standing caveat P1.5
+      and P1.6 carried until P1.7 closed it.
+
+### P2.2 The mesh viewer ✅
+
+- [x] **JB's call, 2026-08-28: the third renderer.** `GLTFLoader` ships inside `three`,
+      so no dependency and no §10 row. §13.6 closes.
+- [x] `preview.SOURCES` gains `mesh`, and it is the one source with **no preview file**:
+      `status` reports it ready with `url == source_url` and skips the whole cache path.
+      Only `.glb` / `.gltf` — a mesh PLY would be drawn as a point cloud.
+- [x] `MeshCanvas.tsx` on the same scene root and the same `Rx-90`; headlight plus
+      ambient, `DoubleSide`, a wireframe toggle, no level selector.
+- [x] `.glb` and `.gltf` registered as `model/gltf-binary` / `model/gltf+json`.
+
+### P2.3 `export/` and step 6
+
+- [x] `step_export.py` rewired off the dead `lfs_output/`: it takes step 4's `splat.ply`
+      and step 5's `mesh/` outputs and **hard-links** them into `export/` (verified
+      `nlink 2`). It no longer resets step 5 — `run_mesh` already did, and a second reset
+      would delete the mesh it is exporting.
+- [x] `step_scene.py`: `find_export_splat` instead of `glob("*.ply")[0]`, which would have
+      handed Blender `mesh.ply` to import as a gaussian cloud; and the README's
+      `{supersplat_url}` placeholder removed, which raised `AttributeError` on every step 6
+      after Blender had already run.
+- [ ] **Step 6 has not been run since.** Both fixes above are on its path and neither has
+      been exercised against a real Blender. That is the next thing.
+- [ ] `ExportDefaults.format` / `.pattern` are shown in the setup panel and read by
+      nothing. Either make export honour them or delete the section.
 
 ---
 
-## P3 — Masking and geometry supervision
+## P3 — Masking and geometry supervision ✅
 
 Both attach to existing steps rather than adding screens, and both are separately
 re-runnable: **the expensive phase must never be redone to change a threshold.**
 
-- [ ] `step_sam.py` + `POST /api/pipeline/masks`, modelled line for line on `/analyze`.
-- [ ] `sam mask` first — no model, no download, no licence question, and it is the 360 /
-      fisheye story (§7.4). Ship this before `sam track`.
-- [ ] `sam track` second, with the SAM 2.1 / SAM 3 licences shown and accepted
-      **separately** before any fetch (§10).
-- [ ] `step_geometry.py` + `POST /api/pipeline/geometry`, writing `sfm/depths/` and
-      `sfm/normals/`.
-- [ ] The checkpoint download is a `curl` child with a CR-redrawn bar — the one channel
-      in this tool family with the §15.1 defect. Report it, and make sure abort kills it.
-- [ ] Step 3's reset takes `sfm/depths` and `sfm/normals` with it. **The step must say so
-      before it deletes them** (§14.1).
+- [x] `step_sam.py` + `POST /api/pipeline/masks`, modelled line for line on `/analyze` —
+      and one correction to what was inherited: **neither pass ever marks its wizard step
+      done.** `run_mask_generation` used to set `step_status["3"] = "done"`, which would
+      put a green tick on a reconstruction that had never been run. `_run_attached_pass`
+      captures the prior status and hands it back, on success, abort and error alike.
+- [x] `sam mask` first, and measured whole (`docs/spirula/sam-mask-run.txt`): it writes
+      `<stem>.png`, two lines for the entire run, **238 frames in 2.6 s**. The speculative
+      run answers `no border found` and exits 0 having written nothing, which the step
+      reports as the expected answer for a rectilinear capture rather than as a failure.
+- [x] `sam track` second, with the SAM 2.1 / SAM 3 licences shown and accepted
+      **separately** — asked as *which one*, never as a tick box, and refused by
+      `check_settings` on the backend too, since a run started from anywhere else must hit
+      the same gate. **Not run: there is no SAM checkpoint on this workstation**, and
+      nothing here downloads one. The command builder and the four refusals are tested;
+      the run itself is the standing caveat, and it needs a hand-fetched checkpoint.
+- [x] `step_geometry.py` + `POST /api/pipeline/geometry`, writing `sfm/depths/` and
+      `sfm/normals/` — **and the junction §13.1 warned about, which is now measured and
+      necessary.** `geometry` has no `--image-dir`: without the link it skipped all 238
+      images and exited **0**. So `sfm/images` is junctioned to `frames/` for the length
+      of the run and removed in a `finally`, and **exit 0 is not read as success**.
+- [x] The checkpoint download is a `curl` child with a CR-redrawn bar — **703 fragments**
+      through `iter_lines` on the 419.4 MB fetch. Dropped from the bus, ridden as its own
+      0.02→0.20 stretch. Abort tested against a live download: `curl.exe` and
+      `spirula.exe` both gone from the process table, `ProcessAborted` rather than
+      `error`, the junction removed and `frames/` intact.
+- [x] Step 3's reset takes `sfm/depths` and `sfm/normals` with it, and `step_sfm` already
+      said so by name before deleting them (§14.1) — verified rather than re-implemented.
+- [ ] **Not looked at in a browser.** `MaskSettings`, `GeometrySettings` and the two step
+      panels typecheck and build, and every backend half is verified against real runs —
+      the same standing caveat P1.5, P1.6 and P2.1 carried.
 
 ---
 
@@ -270,27 +337,29 @@ re-runnable: **the expensive phase must never be redone to change a threshold.**
 
 In the order they block something. See CLAUDE.md §13.
 
-- [ ] **Does `spirula geometry` resolve images outside the dataset folder?** The one
-      thing that could force a junction into the §5 layout. Finish the 419 MB checkpoint
-      download and re-run.
+- [x] ~~**Does `spirula geometry` resolve images outside the dataset folder?**~~ **No —
+      settled in P3, 2026-08-28.** It skipped all 238 images and exited 0. `step_geometry`
+      junctions `sfm/images` to `frames/` for the length of the run only, so §5's layout
+      is unchanged and there is still one copy of the frames.
 - [ ] **A curation verdict is advisory — JB's call what to do about it.** Step 3 is
       handed the image *directory* and there is no filtered copy of the frames anywhere
       (§5.2), so `rejected:blur` reconstructs anyway unless the frame is deleted. Leave
       it advisory, move rejects to `frames/_rejected/` in step 2, or accept it? Step 3's
       panel says so on screen meanwhile. See CLAUDE.md §13.2.
-- [ ] **Basename or full filename for a mask?** `masks/frame_0001.png` beside
-      `frames/frame_0001.jpg` is what step 2 writes; COLMAP's own convention is
-      `frame_0001.jpg.png`. Both reference runs had an empty `masks/`, so this has never
-      actually been exercised. One masked run settles it.
-- [ ] **Are `--mask-dir` / `--depth-dir` / `--normal-dir` absolute-path-capable like
-      `--image-dir`?** Assumed by symmetry, not measured — and since P1.6 this is on the
-      live path, not a future one: step 4 sends `--mask-dir <project>/masks` absolutely,
-      because unlike `sfm auto` the trainer resolves it against `--data` and `masks/` is
-      a sibling of `frames/`, not of `sfm/`. `--depth-dir` and `--normal-dir` are not
-      affected — `sfm/depths` and `sfm/normals` are inside `--data` and keep their
-      relative defaults. One masked run settles it, together with the basename question
-      above.
+- [x] ~~**Basename or full filename for a mask?**~~ **Both — settled in P3, 2026-08-28.**
+      88 230 → 71 301 features over 20 frames, 16 929 keypoints dropped, and the COLMAP
+      naming gives the byte-identical result. `sam mask` writes the basename form itself,
+      and `sfm auto` prints `Masks: <dir>\masks` with no flag passed.
+- [x] **`--mask-dir` is absolute-path-capable — settled in P3, 2026-08-28.** Six
+      200-iteration runs, three each way: psnr 15.12/17.48/15.18 masked against
+      22.40/22.68/20.33 with a path that does not exist. `--depth-dir` and `--normal-dir`
+      stay assumed by symmetry and are not on the live path. **The negative control is the
+      finding: a wrong `--mask-dir` exits 0 and trains unmasked**, so step 4 logs the
+      mask count.
 - [ ] **Audit the MoGe / Metric3D checkpoint licences** and give them real rows in §10.
+      Now on a live path: the default fetch is `moge2-vitb-normal.onnx`, 419.4 MB, from
+      `huggingface.co/Ruicheng/moge-2-vitb-normal-onnx`. The step names the URL and says
+      the licence is unaudited before it runs; the audit itself is still owed.
 - [ ] Measure a 360 / fisheye capture end to end — `--camera-model equirectangular`,
       `sam mask` on the lens border, `geometry --split auto`, `train 360-camera`. Every
       piece is claimed to work and none of it has been run on a real 360 source.

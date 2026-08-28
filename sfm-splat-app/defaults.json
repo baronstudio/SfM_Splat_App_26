@@ -42,6 +42,8 @@
         "samples": 24,
         "dark": 16,
         "replace": false,
+        "model": "",
+        "model_licence": "",
         "text": "",
         "neg_text": "",
         "detect_every": 1,

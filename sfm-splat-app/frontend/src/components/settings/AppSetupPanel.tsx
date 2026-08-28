@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Box,
   Boxes,
   Clapperboard,
   Filter,
   FolderCog,
+  Layers,
+  Mountain,
   Orbit,
   PackageOpen,
   RotateCcw,
@@ -25,6 +28,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import TrainSettings from '@/components/settings/TrainSettings';
+import MaskSettings from '@/components/settings/MaskSettings';
+import GeometrySettings from '@/components/settings/GeometrySettings';
+import MeshSettings from '@/components/settings/MeshSettings';
 import { useDefaults } from '@/hooks/useDefaults';
 import { useSettings } from '@/hooks/useSettings';
 import type { AppDefaults, DefaultsSection } from '@/types';
@@ -172,7 +178,10 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ElementType }[] = [
   { id: 'extract', label: 'Extraction', icon: Clapperboard },
   { id: 'curate', label: 'Curation', icon: Filter },
   { id: 'sfm', label: 'SfM', icon: Scan },
+  { id: 'sam', label: 'Masks', icon: Layers },
+  { id: 'geometry', label: 'Geometry', icon: Mountain },
   { id: 'train', label: 'Training', icon: Sparkles },
+  { id: 'mesh', label: 'Mesh', icon: Box },
   { id: 'export', label: 'Export', icon: PackageOpen },
   { id: 'blender', label: 'Blender', icon: Boxes },
   { id: 'viewer', label: '3D viewer', icon: Orbit },
@@ -680,6 +689,41 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
                 <TrainSettings
                   settings={draft.train}
                   onChange={(t) => setDraft((d) => (d ? { ...d, train: t } : d))}
+                />
+              </div>
+            )}
+
+            {/* Masking and geometry are re-runnable passes rather than steps,
+                but their defaults are layer 2 like everything else. The same
+                components the step panels use, so `maskRefusal` and the licence
+                gate exist once. */}
+            {draft && section === 'sam' && (
+              <div className="pt-2">
+                <MaskSettings
+                  settings={draft.sam}
+                  onChange={(sam) => setDraft((d) => (d ? { ...d, sam } : d))}
+                />
+              </div>
+            )}
+
+            {draft && section === 'geometry' && (
+              <div className="pt-2">
+                <GeometrySettings
+                  settings={draft.geometry}
+                  onChange={(g) => setDraft((d) => (d ? { ...d, geometry: g } : d))}
+                />
+              </div>
+            )}
+
+            {/* Layer 2 for step 5 is the same component step 5 shows, for the
+                same reason the training section is: `meshRefusal` lives in it,
+                and a second copy of the PLY/OBJ rule here would be a second
+                thing to get wrong. */}
+            {draft && section === 'mesh' && (
+              <div className="pt-2">
+                <MeshSettings
+                  settings={draft.mesh}
+                  onChange={(m) => setDraft((d) => (d ? { ...d, mesh: m } : d))}
                 />
               </div>
             )}

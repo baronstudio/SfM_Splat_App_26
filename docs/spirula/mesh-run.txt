@@ -1,0 +1,423 @@
+$ spirula --lang en mesh projects/zz_abort_test/train/run/step-000000200.ckpt --data projects/zz_abort_test/sfm --output <tmp>/mesh --format glb --color texture
+# 2026-08-28, v2026.8.23, this workstation. 98 025 gaussians, 238 cameras (960x720 PINHOLE).
+# 419 lines, of which 360 are the `cameras rendered: N/238` counter of the three camera loops.
+[meshing] loading: projects/zz_abort_test/train/run/step-000000200.ckpt\splat.ply
+[meshing] loading: Gaussians: 98025
+[meshing] loading: reading the cameras from projects/zz_abort_test/sfm
+[meshing] loading: cameras: 238 (960x720, PINHOLE)
+[meshing] loading: Gaussians kept: 98025/98025, points: 686175, relative scale: 0.698418
+[meshing] loading: cameras used: 238/238 (k-means medoids)
+[meshing] loading: camera intrinsics: 960x720, model PINHOLE -- the render path is ready
+[meshing] point cloud: sampling points from the Gaussians (total: 98025)...
+[meshing] point cloud: points: 686175 (0.51s)
+[meshing] Delaunay: triangulating the points (total: 686175)...
+[meshing] Delaunay: tetrahedra: 4596434, threads: 12 (0.90s)
+[meshing] occupancy: evaluating the points (total: 686175)...
+[meshing] occupancy: cameras rendered: 4/238
+[meshing] occupancy: cameras rendered: 8/238
+[meshing] occupancy: cameras rendered: 12/238
+[meshing] occupancy: cameras rendered: 16/238
+[meshing] occupancy: cameras rendered: 20/238
+[meshing] occupancy: cameras rendered: 24/238
+[meshing] occupancy: cameras rendered: 28/238
+[meshing] occupancy: cameras rendered: 32/238
+[meshing] occupancy: cameras rendered: 36/238
+[meshing] occupancy: cameras rendered: 40/238
+[meshing] occupancy: cameras rendered: 44/238
+[meshing] occupancy: cameras rendered: 48/238
+[meshing] occupancy: cameras rendered: 52/238
+[meshing] occupancy: cameras rendered: 56/238
+[meshing] occupancy: cameras rendered: 60/238
+[meshing] occupancy: cameras rendered: 64/238
+[meshing] occupancy: cameras rendered: 68/238
+[meshing] occupancy: cameras rendered: 72/238
+[meshing] occupancy: cameras rendered: 76/238
+[meshing] occupancy: cameras rendered: 80/238
+[meshing] occupancy: cameras rendered: 84/238
+[meshing] occupancy: cameras rendered: 88/238
+[meshing] occupancy: cameras rendered: 92/238
+[meshing] occupancy: cameras rendered: 96/238
+[meshing] occupancy: cameras rendered: 100/238
+[meshing] occupancy: cameras rendered: 104/238
+[meshing] occupancy: cameras rendered: 108/238
+[meshing] occupancy: cameras rendered: 112/238
+[meshing] occupancy: cameras rendered: 116/238
+[meshing] occupancy: cameras rendered: 120/238
+[meshing] occupancy: cameras rendered: 124/238
+[meshing] occupancy: cameras rendered: 128/238
+[meshing] occupancy: cameras rendered: 132/238
+[meshing] occupancy: cameras rendered: 136/238
+[meshing] occupancy: cameras rendered: 140/238
+[meshing] occupancy: cameras rendered: 144/238
+[meshing] occupancy: cameras rendered: 148/238
+[meshing] occupancy: cameras rendered: 152/238
+[meshing] occupancy: cameras rendered: 156/238
+[meshing] occupancy: cameras rendered: 160/238
+[meshing] occupancy: cameras rendered: 164/238
+[meshing] occupancy: cameras rendered: 168/238
+[meshing] occupancy: cameras rendered: 172/238
+[meshing] occupancy: cameras rendered: 176/238
+[meshing] occupancy: cameras rendered: 180/238
+[meshing] occupancy: cameras rendered: 184/238
+[meshing] occupancy: cameras rendered: 188/238
+[meshing] occupancy: cameras rendered: 192/238
+[meshing] occupancy: cameras rendered: 196/238
+[meshing] occupancy: cameras rendered: 200/238
+[meshing] occupancy: cameras rendered: 204/238
+[meshing] occupancy: cameras rendered: 208/238
+[meshing] occupancy: cameras rendered: 212/238
+[meshing] occupancy: cameras rendered: 216/238
+[meshing] occupancy: cameras rendered: 220/238
+[meshing] occupancy: cameras rendered: 224/238
+[meshing] occupancy: cameras rendered: 228/238
+[meshing] occupancy: cameras rendered: 232/238
+[meshing] occupancy: cameras rendered: 236/238
+[meshing] occupancy: cameras rendered: 238/238
+[meshing] occupancy: 0.64s
+[meshing] cut edges: scanning the tetrahedra (total: 4596434)...
+[meshing] cut edges: edges: 721007 (0.40s)
+[meshing] bisection: edges: 721007, iterations: 3...
+[meshing] occupancy: cameras rendered: 4/238
+[meshing] occupancy: cameras rendered: 8/238
+[meshing] occupancy: cameras rendered: 12/238
+[meshing] occupancy: cameras rendered: 16/238
+[meshing] occupancy: cameras rendered: 20/238
+[meshing] occupancy: cameras rendered: 24/238
+[meshing] occupancy: cameras rendered: 28/238
+[meshing] occupancy: cameras rendered: 32/238
+[meshing] occupancy: cameras rendered: 36/238
+[meshing] occupancy: cameras rendered: 40/238
+[meshing] occupancy: cameras rendered: 44/238
+[meshing] occupancy: cameras rendered: 48/238
+[meshing] occupancy: cameras rendered: 52/238
+[meshing] occupancy: cameras rendered: 56/238
+[meshing] occupancy: cameras rendered: 60/238
+[meshing] occupancy: cameras rendered: 64/238
+[meshing] occupancy: cameras rendered: 68/238
+[meshing] occupancy: cameras rendered: 72/238
+[meshing] occupancy: cameras rendered: 76/238
+[meshing] occupancy: cameras rendered: 80/238
+[meshing] occupancy: cameras rendered: 84/238
+[meshing] occupancy: cameras rendered: 88/238
+[meshing] occupancy: cameras rendered: 92/238
+[meshing] occupancy: cameras rendered: 96/238
+[meshing] occupancy: cameras rendered: 100/238
+[meshing] occupancy: cameras rendered: 104/238
+[meshing] occupancy: cameras rendered: 108/238
+[meshing] occupancy: cameras rendered: 112/238
+[meshing] occupancy: cameras rendered: 116/238
+[meshing] occupancy: cameras rendered: 120/238
+[meshing] occupancy: cameras rendered: 124/238
+[meshing] occupancy: cameras rendered: 128/238
+[meshing] occupancy: cameras rendered: 132/238
+[meshing] occupancy: cameras rendered: 136/238
+[meshing] occupancy: cameras rendered: 140/238
+[meshing] occupancy: cameras rendered: 144/238
+[meshing] occupancy: cameras rendered: 148/238
+[meshing] occupancy: cameras rendered: 152/238
+[meshing] occupancy: cameras rendered: 156/238
+[meshing] occupancy: cameras rendered: 160/238
+[meshing] occupancy: cameras rendered: 164/238
+[meshing] occupancy: cameras rendered: 168/238
+[meshing] occupancy: cameras rendered: 172/238
+[meshing] occupancy: cameras rendered: 176/238
+[meshing] occupancy: cameras rendered: 180/238
+[meshing] occupancy: cameras rendered: 184/238
+[meshing] occupancy: cameras rendered: 188/238
+[meshing] occupancy: cameras rendered: 192/238
+[meshing] occupancy: cameras rendered: 196/238
+[meshing] occupancy: cameras rendered: 200/238
+[meshing] occupancy: cameras rendered: 204/238
+[meshing] occupancy: cameras rendered: 208/238
+[meshing] occupancy: cameras rendered: 212/238
+[meshing] occupancy: cameras rendered: 216/238
+[meshing] occupancy: cameras rendered: 220/238
+[meshing] occupancy: cameras rendered: 224/238
+[meshing] occupancy: cameras rendered: 228/238
+[meshing] occupancy: cameras rendered: 232/238
+[meshing] occupancy: cameras rendered: 236/238
+[meshing] occupancy: cameras rendered: 238/238
+[meshing] occupancy: cameras rendered: 4/238
+[meshing] occupancy: cameras rendered: 8/238
+[meshing] occupancy: cameras rendered: 12/238
+[meshing] occupancy: cameras rendered: 16/238
+[meshing] occupancy: cameras rendered: 20/238
+[meshing] occupancy: cameras rendered: 24/238
+[meshing] occupancy: cameras rendered: 28/238
+[meshing] occupancy: cameras rendered: 32/238
+[meshing] occupancy: cameras rendered: 36/238
+[meshing] occupancy: cameras rendered: 40/238
+[meshing] occupancy: cameras rendered: 44/238
+[meshing] occupancy: cameras rendered: 48/238
+[meshing] occupancy: cameras rendered: 52/238
+[meshing] occupancy: cameras rendered: 56/238
+[meshing] occupancy: cameras rendered: 60/238
+[meshing] occupancy: cameras rendered: 64/238
+[meshing] occupancy: cameras rendered: 68/238
+[meshing] occupancy: cameras rendered: 72/238
+[meshing] occupancy: cameras rendered: 76/238
+[meshing] occupancy: cameras rendered: 80/238
+[meshing] occupancy: cameras rendered: 84/238
+[meshing] occupancy: cameras rendered: 88/238
+[meshing] occupancy: cameras rendered: 92/238
+[meshing] occupancy: cameras rendered: 96/238
+[meshing] occupancy: cameras rendered: 100/238
+[meshing] occupancy: cameras rendered: 104/238
+[meshing] occupancy: cameras rendered: 108/238
+[meshing] occupancy: cameras rendered: 112/238
+[meshing] occupancy: cameras rendered: 116/238
+[meshing] occupancy: cameras rendered: 120/238
+[meshing] occupancy: cameras rendered: 124/238
+[meshing] occupancy: cameras rendered: 128/238
+[meshing] occupancy: cameras rendered: 132/238
+[meshing] occupancy: cameras rendered: 136/238
+[meshing] occupancy: cameras rendered: 140/238
+[meshing] occupancy: cameras rendered: 144/238
+[meshing] occupancy: cameras rendered: 148/238
+[meshing] occupancy: cameras rendered: 152/238
+[meshing] occupancy: cameras rendered: 156/238
+[meshing] occupancy: cameras rendered: 160/238
+[meshing] occupancy: cameras rendered: 164/238
+[meshing] occupancy: cameras rendered: 168/238
+[meshing] occupancy: cameras rendered: 172/238
+[meshing] occupancy: cameras rendered: 176/238
+[meshing] occupancy: cameras rendered: 180/238
+[meshing] occupancy: cameras rendered: 184/238
+[meshing] occupancy: cameras rendered: 188/238
+[meshing] occupancy: cameras rendered: 192/238
+[meshing] occupancy: cameras rendered: 196/238
+[meshing] occupancy: cameras rendered: 200/238
+[meshing] occupancy: cameras rendered: 204/238
+[meshing] occupancy: cameras rendered: 208/238
+[meshing] occupancy: cameras rendered: 212/238
+[meshing] occupancy: cameras rendered: 216/238
+[meshing] occupancy: cameras rendered: 220/238
+[meshing] occupancy: cameras rendered: 224/238
+[meshing] occupancy: cameras rendered: 228/238
+[meshing] occupancy: cameras rendered: 232/238
+[meshing] occupancy: cameras rendered: 236/238
+[meshing] occupancy: cameras rendered: 238/238
+[meshing] occupancy: cameras rendered: 4/238
+[meshing] occupancy: cameras rendered: 8/238
+[meshing] occupancy: cameras rendered: 12/238
+[meshing] occupancy: cameras rendered: 16/238
+[meshing] occupancy: cameras rendered: 20/238
+[meshing] occupancy: cameras rendered: 24/238
+[meshing] occupancy: cameras rendered: 28/238
+[meshing] occupancy: cameras rendered: 32/238
+[meshing] occupancy: cameras rendered: 36/238
+[meshing] occupancy: cameras rendered: 40/238
+[meshing] occupancy: cameras rendered: 44/238
+[meshing] occupancy: cameras rendered: 48/238
+[meshing] occupancy: cameras rendered: 52/238
+[meshing] occupancy: cameras rendered: 56/238
+[meshing] occupancy: cameras rendered: 60/238
+[meshing] occupancy: cameras rendered: 64/238
+[meshing] occupancy: cameras rendered: 68/238
+[meshing] occupancy: cameras rendered: 72/238
+[meshing] occupancy: cameras rendered: 76/238
+[meshing] occupancy: cameras rendered: 80/238
+[meshing] occupancy: cameras rendered: 84/238
+[meshing] occupancy: cameras rendered: 88/238
+[meshing] occupancy: cameras rendered: 92/238
+[meshing] occupancy: cameras rendered: 96/238
+[meshing] occupancy: cameras rendered: 100/238
+[meshing] occupancy: cameras rendered: 104/238
+[meshing] occupancy: cameras rendered: 108/238
+[meshing] occupancy: cameras rendered: 112/238
+[meshing] occupancy: cameras rendered: 116/238
+[meshing] occupancy: cameras rendered: 120/238
+[meshing] occupancy: cameras rendered: 124/238
+[meshing] occupancy: cameras rendered: 128/238
+[meshing] occupancy: cameras rendered: 132/238
+[meshing] occupancy: cameras rendered: 136/238
+[meshing] occupancy: cameras rendered: 140/238
+[meshing] occupancy: cameras rendered: 144/238
+[meshing] occupancy: cameras rendered: 148/238
+[meshing] occupancy: cameras rendered: 152/238
+[meshing] occupancy: cameras rendered: 156/238
+[meshing] occupancy: cameras rendered: 160/238
+[meshing] occupancy: cameras rendered: 164/238
+[meshing] occupancy: cameras rendered: 168/238
+[meshing] occupancy: cameras rendered: 172/238
+[meshing] occupancy: cameras rendered: 176/238
+[meshing] occupancy: cameras rendered: 180/238
+[meshing] occupancy: cameras rendered: 184/238
+[meshing] occupancy: cameras rendered: 188/238
+[meshing] occupancy: cameras rendered: 192/238
+[meshing] occupancy: cameras rendered: 196/238
+[meshing] occupancy: cameras rendered: 200/238
+[meshing] occupancy: cameras rendered: 204/238
+[meshing] occupancy: cameras rendered: 208/238
+[meshing] occupancy: cameras rendered: 212/238
+[meshing] occupancy: cameras rendered: 216/238
+[meshing] occupancy: cameras rendered: 220/238
+[meshing] occupancy: cameras rendered: 224/238
+[meshing] occupancy: cameras rendered: 228/238
+[meshing] occupancy: cameras rendered: 232/238
+[meshing] occupancy: cameras rendered: 236/238
+[meshing] occupancy: cameras rendered: 238/238
+[meshing] bisection: 1.39s
+[meshing] marching tets: raw faces: 1450288 (0.27s)
+[meshing] merge: collapses: 434951 -- vertices: 286056, faces: 580387
+[meshing] merge: 4.95s
+[meshing] cull unseen: vertices dropped: 83198/286056, faces dropped: 225430 -- vertices: 202858, faces: 354957 (0.59s)
+[meshing] merge: collapses: 103995 -- vertices: 98863, faces: 159578
+[meshing] merge: 0.91s
+[meshing] cleanup: duplicate faces removed: 41 -- faces: 159537
+[meshing] cleanup: floaters -- faces removed: 1897, vertices removed: 7172; vertices: 91691, faces: 157640
+[meshing] cleanup: non-manifold vertices split: 2945, copies added: 3068 -- vertices: 94759
+[meshing] cleanup: holes filled: 3059 (smaller than 0.05 of their component, or at most 20 edges), faces added: 18605 -- vertices: 94760, faces: 176245
+[meshing] cleanup: non-manifold vertices split: 0, copies added: 0 -- vertices: 94760
+[meshing] cleanup: floaters -- faces removed: 2530, vertices removed: 2815; vertices: 91945, faces: 173715
+[meshing] cleanup: degenerate faces -- collapses: 864, flips: 0; vertices: 91081, faces: 172018
+[meshing] cleanup: 1.98s
+[meshing] cull unseen: vertices dropped: 4748/91081, faces dropped: 14627 -- vertices: 86333, faces: 157391 (0.12s)
+[meshing] merge: collapses: 39985 -- vertices: 46348, faces: 81048
+[meshing] merge: 0.34s
+[meshing] cleanup: duplicate faces removed: 17 -- faces: 81031
+[meshing] cleanup: floaters -- faces removed: 1050, vertices removed: 1672; vertices: 44676, faces: 79981
+[meshing] cleanup: non-manifold vertices split: 736, copies added: 774 -- vertices: 45450
+[meshing] cleanup: holes filled: 1258 (smaller than 0.05 of their component, or at most 20 edges), faces added: 5067 -- vertices: 45452, faces: 85048
+[meshing] cleanup: non-manifold vertices split: 0, copies added: 0 -- vertices: 45452
+[meshing] cleanup: floaters -- faces removed: 580, vertices removed: 638; vertices: 44814, faces: 84468
+[meshing] cleanup: degenerate faces -- collapses: 125, flips: 0; vertices: 44689, faces: 84221
+[meshing] cleanup: 0.51s
+[meshing] quality: valence flips: 17998, tangential moves: 115009, iterations: 3
+[meshing] cleanup: degenerate faces -- collapses: 29, flips: 0; vertices: 44660, faces: 84166
+[meshing] quality: 0.29s
+[meshing] orient: 0.04s
+[meshing] texel density: cameras rendered: 4/238
+[meshing] texel density: cameras rendered: 8/238
+[meshing] texel density: cameras rendered: 12/238
+[meshing] texel density: cameras rendered: 16/238
+[meshing] texel density: cameras rendered: 20/238
+[meshing] texel density: cameras rendered: 24/238
+[meshing] texel density: cameras rendered: 28/238
+[meshing] texel density: cameras rendered: 32/238
+[meshing] texel density: cameras rendered: 36/238
+[meshing] texel density: cameras rendered: 40/238
+[meshing] texel density: cameras rendered: 44/238
+[meshing] texel density: cameras rendered: 48/238
+[meshing] texel density: cameras rendered: 52/238
+[meshing] texel density: cameras rendered: 56/238
+[meshing] texel density: cameras rendered: 60/238
+[meshing] texel density: cameras rendered: 64/238
+[meshing] texel density: cameras rendered: 68/238
+[meshing] texel density: cameras rendered: 72/238
+[meshing] texel density: cameras rendered: 76/238
+[meshing] texel density: cameras rendered: 80/238
+[meshing] texel density: cameras rendered: 84/238
+[meshing] texel density: cameras rendered: 88/238
+[meshing] texel density: cameras rendered: 92/238
+[meshing] texel density: cameras rendered: 96/238
+[meshing] texel density: cameras rendered: 100/238
+[meshing] texel density: cameras rendered: 104/238
+[meshing] texel density: cameras rendered: 108/238
+[meshing] texel density: cameras rendered: 112/238
+[meshing] texel density: cameras rendered: 116/238
+[meshing] texel density: cameras rendered: 120/238
+[meshing] texel density: cameras rendered: 124/238
+[meshing] texel density: cameras rendered: 128/238
+[meshing] texel density: cameras rendered: 132/238
+[meshing] texel density: cameras rendered: 136/238
+[meshing] texel density: cameras rendered: 140/238
+[meshing] texel density: cameras rendered: 144/238
+[meshing] texel density: cameras rendered: 148/238
+[meshing] texel density: cameras rendered: 152/238
+[meshing] texel density: cameras rendered: 156/238
+[meshing] texel density: cameras rendered: 160/238
+[meshing] texel density: cameras rendered: 164/238
+[meshing] texel density: cameras rendered: 168/238
+[meshing] texel density: cameras rendered: 172/238
+[meshing] texel density: cameras rendered: 176/238
+[meshing] texel density: cameras rendered: 180/238
+[meshing] texel density: cameras rendered: 184/238
+[meshing] texel density: cameras rendered: 188/238
+[meshing] texel density: cameras rendered: 192/238
+[meshing] texel density: cameras rendered: 196/238
+[meshing] texel density: cameras rendered: 200/238
+[meshing] texel density: cameras rendered: 204/238
+[meshing] texel density: cameras rendered: 208/238
+[meshing] texel density: cameras rendered: 212/238
+[meshing] texel density: cameras rendered: 216/238
+[meshing] texel density: cameras rendered: 220/238
+[meshing] texel density: cameras rendered: 224/238
+[meshing] texel density: cameras rendered: 228/238
+[meshing] texel density: cameras rendered: 232/238
+[meshing] texel density: cameras rendered: 236/238
+[meshing] texel density: cameras rendered: 238/238
+[meshing] UV: texture size chosen for you: 4096 (budget 1.05515e+07 texels)
+[meshing] UV: charts grown: 4344 (cap 2104), after the disk split: 1308
+[meshing] UV: charts: 1308 over faces: 84166 (0.12s)
+[meshing] UV: charts parameterized: 3659 (split retries: 2351, parked: 0) (0.60s)
+[meshing] UV: charts packed: 3659, efficiency 75%, texels per budget unit: 0.392561 (0.02s)
+[meshing] UV: seam split -- vertices added: 34010, vertices: 78670 (0.77s in total)
+[meshing] bake: covered texels: 4490440/16777216 (26.8%) (0.11s)
+[meshing] color: cameras rendered: 4/238
+[meshing] color: cameras rendered: 8/238
+[meshing] color: cameras rendered: 12/238
+[meshing] color: cameras rendered: 16/238
+[meshing] color: cameras rendered: 20/238
+[meshing] color: cameras rendered: 24/238
+[meshing] color: cameras rendered: 28/238
+[meshing] color: cameras rendered: 32/238
+[meshing] color: cameras rendered: 36/238
+[meshing] color: cameras rendered: 40/238
+[meshing] color: cameras rendered: 44/238
+[meshing] color: cameras rendered: 48/238
+[meshing] color: cameras rendered: 52/238
+[meshing] color: cameras rendered: 56/238
+[meshing] color: cameras rendered: 60/238
+[meshing] color: cameras rendered: 64/238
+[meshing] color: cameras rendered: 68/238
+[meshing] color: cameras rendered: 72/238
+[meshing] color: cameras rendered: 76/238
+[meshing] color: cameras rendered: 80/238
+[meshing] color: cameras rendered: 84/238
+[meshing] color: cameras rendered: 88/238
+[meshing] color: cameras rendered: 92/238
+[meshing] color: cameras rendered: 96/238
+[meshing] color: cameras rendered: 100/238
+[meshing] color: cameras rendered: 104/238
+[meshing] color: cameras rendered: 108/238
+[meshing] color: cameras rendered: 112/238
+[meshing] color: cameras rendered: 116/238
+[meshing] color: cameras rendered: 120/238
+[meshing] color: cameras rendered: 124/238
+[meshing] color: cameras rendered: 128/238
+[meshing] color: cameras rendered: 132/238
+[meshing] color: cameras rendered: 136/238
+[meshing] color: cameras rendered: 140/238
+[meshing] color: cameras rendered: 144/238
+[meshing] color: cameras rendered: 148/238
+[meshing] color: cameras rendered: 152/238
+[meshing] color: cameras rendered: 156/238
+[meshing] color: cameras rendered: 160/238
+[meshing] color: cameras rendered: 164/238
+[meshing] color: cameras rendered: 168/238
+[meshing] color: cameras rendered: 172/238
+[meshing] color: cameras rendered: 176/238
+[meshing] color: cameras rendered: 180/238
+[meshing] color: cameras rendered: 184/238
+[meshing] color: cameras rendered: 188/238
+[meshing] color: cameras rendered: 192/238
+[meshing] color: cameras rendered: 196/238
+[meshing] color: cameras rendered: 200/238
+[meshing] color: cameras rendered: 204/238
+[meshing] color: cameras rendered: 208/238
+[meshing] color: cameras rendered: 212/238
+[meshing] color: cameras rendered: 216/238
+[meshing] color: cameras rendered: 220/238
+[meshing] color: cameras rendered: 224/238
+[meshing] color: cameras rendered: 228/238
+[meshing] color: cameras rendered: 232/238
+[meshing] color: cameras rendered: 236/238
+[meshing] color: cameras rendered: 238/238
+[meshing] bake: texels colored: 4490440 (0.68s)
+[meshing] bake: dilation and fill (0.12s); the 4096x4096 texture is finished (0.98s in total)
+[meshing] texture: 2.33s
+[meshing] stats: vertices: 78670, faces: 84166, components: 5111; edges -- boundary: 63326, non-manifold: 0, mis-oriented: 0; duplicate faces: 0; smallest angle: 0.00 deg (faces under 5 deg: 147, under 15 deg: 1105)
+[meshing] wrote: C:/Users/jbbar/AppData/Local/Temp/claude/c--Travail-DEV-SfM-Splat-App-26/f9d3b69a-80df-457a-93f3-0934c035fbf0/scratchpad/meshprobe/mesh.glb -- vertices: 78670, faces: 84166
+[meshing] done: vertices: 78670, faces: 84166 (total 18.15s)
+[exit 0]

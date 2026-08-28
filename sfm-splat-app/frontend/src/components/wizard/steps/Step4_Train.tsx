@@ -3,7 +3,7 @@ import {
   CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import {
-  AlertTriangle, CheckCircle, Info, RefreshCw, Sliders,
+  AlertTriangle, CheckCircle, Info, Mountain, RefreshCw, Sliders,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { usePipelineStore } from '@/store/pipelineStore';
@@ -13,9 +13,12 @@ import { useProjectSettings } from '@/hooks/useProjectSettings';
 import { ProgressBar } from '@/components/panels/ProgressBar';
 import SceneViewer from '@/components/viewer/SceneViewer';
 import TrainSettings, { presetDefaults } from '@/components/settings/TrainSettings';
+import GeometrySettings from '@/components/settings/GeometrySettings';
 import SaveState from '@/components/settings/SaveState';
 import client from '@/api/client';
-import type { TrainDefaults, TrainMetric, TrainResult } from '@/types';
+import type {
+  GeometryDefaults, GeometryRunResult, TrainDefaults, TrainMetric, TrainResult,
+} from '@/types';
 
 /** What `--data` and `--image-dir` will really point at, read off the folders. */
 interface DatasetState {
@@ -181,10 +184,12 @@ const Step4_Train: React.FC = () => {
   const {
     currentProjectId, stepStatuses, setCurrentStep, trainMetrics, clearTrainMetrics,
   } = usePipelineStore();
-  const { startPipeline } = usePipeline();
+  const { startPipeline, runGeometry } = usePipeline();
   const { defaults } = useDefaults();
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showGeometry, setShowGeometry] = useState(false);
+  const [geometryRun, setGeometryRun] = useState<GeometryRunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<TrainResult | null>(null);
   const [dataset, setDataset] = useState<DatasetState | null>(null);
@@ -194,6 +199,16 @@ const Step4_Train: React.FC = () => {
     value: train, setValue: setTrain, flush: flushTrain,
     saving, savedAt, error: saveError,
   } = useProjectSettings<TrainDefaults>(currentProjectId, 'train', defaults?.train ?? null);
+
+  // The geometry pass is layer 3 like everything else, and it attaches to step 4
+  // without being it: it writes per-image maps *into* the dataset step 3 built,
+  // and running it never marks this step done (CLAUDE.md §7.5).
+  const {
+    value: geometry, setValue: setGeometry, flush: flushGeometry,
+    saving: geoSaving, savedAt: geoSavedAt, error: geoSaveError,
+  } = useProjectSettings<GeometryDefaults>(
+    currentProjectId, 'geometry', defaults?.geometry ?? null,
+  );
 
   const status = stepStatuses[4];
   const isRunning = status === 'running';
@@ -207,6 +222,11 @@ const Step4_Train: React.FC = () => {
         setDataset(r.data?.dataset ?? null);
       })
       .catch(() => { setResult(null); setDataset(null); });
+    // The geometry pass writes its own result beside the sparse model, for the
+    // same reason every step does: a log line is gone on the next page load.
+    client.get(`/files/${currentProjectId}/geometry`)
+      .then((r) => setGeometryRun(r.data?.run ?? null))
+      .catch(() => setGeometryRun(null));
     client.get(`/files/${currentProjectId}/masks`)
       .then((r) => setMasks(r.data?.masks ?? null))
       .catch(() => setMasks(null));
@@ -226,6 +246,17 @@ const Step4_Train: React.FC = () => {
       await startPipeline(currentProjectId, 4, { train });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to start the training');
+    }
+  };
+
+  const handleGeometry = async () => {
+    if (!currentProjectId || !geometry) return;
+    setError(null);
+    try {
+      await flushGeometry();
+      await runGeometry(currentProjectId, { geometry });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to start the geometry pass');
     }
   };
 
@@ -311,7 +342,19 @@ const Step4_Train: React.FC = () => {
       </div>
 
       <div className="flex items-center justify-end gap-1">
-        <SaveState saving={saving} savedAt={savedAt} error={saveError} />
+        <SaveState
+          saving={saving || geoSaving}
+          savedAt={geoSavedAt ?? savedAt}
+          error={saveError ?? geoSaveError}
+        />
+        <Button
+          variant="ghost" size="sm"
+          onClick={() => setShowGeometry((v) => !v)}
+          className="text-slate-400 hover:text-slate-100 gap-1"
+        >
+          <Mountain className="w-4 h-4" />
+          Geometry
+        </Button>
         <Button
           variant="ghost" size="sm"
           onClick={() => setShowSettings((v) => !v)}
@@ -321,6 +364,62 @@ const Step4_Train: React.FC = () => {
           Advanced
         </Button>
       </div>
+
+      {/* The geometry pass — a separate run, never a re-training (CLAUDE.md
+          §7.5). It writes sfm/normals/ and sfm/depths/ *inside* the dataset, so
+          the training below reads them through --data with no flag at all. A
+          step 3 re-run deletes them with the rest of sfm/. */}
+      {showGeometry && geometry && (
+        <div className="rounded-lg bg-slate-800 border border-slate-700 p-4 space-y-4">
+          <GeometrySettings settings={geometry} onChange={setGeometry} />
+
+          <div className="flex items-center gap-3 flex-wrap border-t border-slate-700/60 pt-4">
+            <Button
+              onClick={handleGeometry}
+              disabled={isRunning || !dataset?.has_model}
+              className="bg-slate-700 hover:bg-slate-600 text-white gap-1"
+            >
+              <Mountain className="w-4 h-4" />
+              {dataset && (dataset.normals || dataset.depths)
+                ? 'Re-run the geometry pass' : 'Estimate depth & normals'}
+            </Button>
+            <span className="text-xs text-slate-500">
+              {dataset?.has_model
+                ? 'Writes sfm/normals/ and sfm/depths/ — the training is not re-run.'
+                : "Needs step 3's sparse model: the pass reads the reconstruction's cameras."}
+            </span>
+          </div>
+
+          {geometryRun && (
+            <div className="rounded-md bg-slate-900/60 border border-slate-700 px-3 py-2 text-xs text-slate-400 space-y-1">
+              <p>
+                Last run: {geometryRun.normals} normal
+                {geometryRun.depth ? ` + ${geometryRun.depths} depth` : ''} maps
+                {' · '}{geometryRun.normal_format} at {geometryRun.max_size} px
+                {geometryRun.elapsed_s !== undefined && ` · ${geometryRun.elapsed_s} s`}
+                {' · '}spirula {geometryRun.spirula_version}
+              </p>
+              {geometryRun.skipped_images > 0 && (
+                <p className="text-amber-300/90">
+                  {geometryRun.skipped_images} image(s) were skipped — those
+                  frames carry no geometry term.
+                </p>
+              )}
+              {geometryRun.stale_normals > 0 && (
+                <p className="text-amber-300/90">
+                  {geometryRun.stale_normals} map(s) in the other format are
+                  still beside these. The tool writes the new format next to the
+                  old rather than over it — delete the stale ones.
+                </p>
+              )}
+            </div>
+          )}
+
+          {(isRunning || geometryRun) && (
+            <ProgressBar step="geometry" label="spirula geometry" />
+          )}
+        </div>
+      )}
 
       {showSettings && train && (
         <div className="rounded-lg bg-slate-800 border border-slate-700 p-4">

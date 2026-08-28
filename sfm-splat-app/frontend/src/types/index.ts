@@ -342,6 +342,86 @@ export interface LFSDefaults {
   mask_mode: MaskMode;
 }
 
+// ── Step 5 — `spirula mesh` (CLAUDE.md §7.8) ─────────────────────────────────
+
+export type MeshFormat = 'ply' | 'obj' | 'gltf' | 'glb';
+export type MeshColor = 'none' | 'vertex' | 'texture';
+
+/**
+ * Step 5's knobs. Unlike `train` there are no presets, so a knob holding the
+ * build's own number is harmless — `step_mesh._moved_from_build_default` simply
+ * keeps it off the command line so the log stays readable.
+ *
+ * Two format/colour pairs are a **precondition, not a warning**: the tool exits
+ * 1 having written nothing at all — not even the formats it could have made —
+ * so `meshRefusal()` gates the Run button and `check_formats` gates the step.
+ */
+export interface MeshDefaults {
+  formats: MeshFormat[];
+  color: MeshColor;
+  /** Only `glb` carries one, and only under `--color texture`. */
+  texture_encoding: 'png' | 'jpg' | 'jpeg75';
+  /** 0 takes it from the observed-detail texel budget. */
+  texture_size: number;
+  /** 0 means "let the build decide" — 0.5 with cameras, 0.2 without. */
+  iso: number;
+  /** Off sends `--no-data`: meshed from the gaussian densities alone. */
+  use_cameras: boolean;
+  max_cameras: number;
+  max_grid_res: number;
+  cull_unseen: boolean;
+  floater_min_faces: number;
+  quality_iters: number;
+  num_threads: number;
+}
+
+export interface MeshFile {
+  filename: string;
+  bytes: number;
+  path?: string;
+  url?: string;
+  /** `scene` is step 6's half of `export/` — scene.blend and its README. */
+  role?: 'splat' | 'mesh' | 'scene';
+}
+
+/** `mesh/mesh_result.json` — four lines out of the run's 419, kept. */
+export interface MeshResult {
+  exit_code: number;
+  spirula_version: string;
+  checkpoint: string;
+  formats: string[];
+  color: MeshColor;
+  cameras_requested: boolean;
+  iso: number | null;
+  files: MeshFile[];
+  written: string[];
+  command: string[];
+  finished_at: string;
+  gaussians?: number;
+  cameras_used?: number;
+  cameras_available?: number;
+  vertices?: number;
+  faces?: number;
+  components?: number;
+  boundary_edges?: number;
+  non_manifold_edges?: number;
+  mis_oriented_edges?: number;
+  texture_size?: number;
+  texels_covered?: number;
+  texels_total?: number;
+  texel_coverage_pct?: number;
+  elapsed_s?: number;
+}
+
+/** What step 5 will read, before it reads it — `GET /files/{id}/mesh`. */
+export interface MeshInputState {
+  has_splat: boolean;
+  splat_file: string | null;
+  splat_bytes: number | null;
+  checkpoint: string | null;
+  has_model: boolean;
+}
+
 export interface ExportDefaults {
   format: 'ply' | 'splat';
   pattern: string;
@@ -381,6 +461,120 @@ export interface SfmDefaults {
   /** Off sends `--no-masks`. Adoption of a `masks/` sibling is automatic. */
   use_masks: boolean;
   progress_dir: boolean;
+}
+
+// ── Masking — `spirula sam` (CLAUDE.md §7.4) ─────────────────────────────────
+
+/** Which licence was read and accepted for the `sam track` checkpoint (§10).
+ *
+ *  Two values and not a boolean, because they are not the same question: SAM
+ *  2.1 is Apache-2.0 and SAM 3 is Meta's own, non-standard licence. Empty
+ *  refuses the run — the backend checks this too, since a run started from
+ *  anywhere else must hit the same gate.
+ */
+export type SamLicence = '' | 'sam2.1' | 'sam3';
+
+export interface SamDefaults {
+  /** `shape` is `sam mask` — no model, no download. `track` is `sam track`. */
+  mode: 'off' | 'shape' | 'track';
+
+  // -- shape: no model, no download, no licence question --
+  /** Empty looks for the border itself; ';' separates, a leading '-' cuts out. */
+  shape_spec: string;
+  shrink: number;
+  samples: number;
+  dark: number;
+  /** Off *intersects* with the masks already there, which is how this stacks. */
+  replace: boolean;
+
+  // -- track: needs a SAM checkpoint, downloaded by hand --
+  model: string;
+  model_licence: SamLicence;
+  text: string;
+  neg_text: string;
+  detect_every: number;
+  threshold: number;
+  nms: number;
+  max_size: number;
+  /** The tool's own polarity is already what a reconstruction wants. */
+  keep_prompted: boolean;
+}
+
+/** `analysis/mask_result.json` — how the last `spirula sam` run went. */
+export interface MaskRunResult {
+  exit_code: number;
+  spirula_version: string;
+  mode: 'shape' | 'track';
+  frames: number;
+  masks_before: number;
+  masks: number;
+  matched: number;
+  replace: boolean;
+  shape_spec: string | null;
+  text: string | null;
+  model: string | null;
+  model_licence: SamLicence | null;
+  command: string[];
+  finished_at: string;
+  masks_written?: number;
+  images_seen?: number;
+  /** `sam mask` found no lens border and wrote nothing — exit 0, not a failure. */
+  no_border?: boolean;
+}
+
+// ── Geometry supervision — `spirula geometry` (CLAUDE.md §7.5) ───────────────
+
+export interface GeometryDefaults {
+  enabled: boolean;
+  /** Empty lets the build fetch its own (moge2-vitb-normal.onnx, 419.4 MB). */
+  model: string;
+  /** Off in the tool's own default: normals are what a reconstruction wants. */
+  depth: boolean;
+  max_size: number;
+  normal_format: 'png' | 'jpg';
+  jpeg_quality: number;
+  depth_units: 'relative' | 'mm';
+  ray_depth: 'auto' | 'yes' | 'no';
+  split: 'auto' | 'yes' | 'no';
+  /** Off continues where the last run stopped rather than recomputing. */
+  overwrite: boolean;
+}
+
+/** `sfm/geometry_result.json` — how the last `spirula geometry` run went. */
+export interface GeometryRunResult {
+  exit_code: number;
+  spirula_version: string;
+  model: string;
+  max_size: number;
+  normal_format: 'png' | 'jpg';
+  depth: boolean;
+  ray_depth: string;
+  split: string;
+  overwrite: boolean;
+  skipped_images: number;
+  normals: number;
+  depths: number;
+  normals_before: number;
+  depths_before: number;
+  /** Maps left behind in the other format — the tool writes beside, not over. */
+  stale_normals: number;
+  command: string[];
+  finished_at: string;
+  images?: number;
+  cameras?: number;
+  written?: number;
+  already_there?: number;
+  elapsed_s?: number;
+  fetched_model?: string;
+  fetched_mb?: number;
+}
+
+/** What `GET /api/files/{id}/geometry` answers — the folders step 4 will read. */
+export interface GeometryState {
+  normals: number;
+  depths: number;
+  images: number;
+  has_model: boolean;
 }
 
 /** `sfm/sfm_result.json` — the verdict that outlives the scrollback (§7.1). */
@@ -503,7 +697,10 @@ export interface AppDefaults {
   extract: ExtractDefaults;
   curate: CurateDefaults;
   sfm: SfmDefaults;
+  sam: SamDefaults;
+  geometry: GeometryDefaults;
   train: TrainDefaults;
+  mesh: MeshDefaults;
   export: ExportDefaults;
   blender: BlenderDefaults;
   viewer: ViewerDefaults;
@@ -713,17 +910,20 @@ export interface ImageSetManifest {
 
 /**
  * What the viewer can ask for. `sfm` is step 3's sparse model (COLMAP binary,
- * not a PLY), `train` is the trained splat of the highest checkpoint. Step 5's
- * mesh is deliberately absent — a textured glb is neither a point cloud nor a
- * splat, and whether it gets a third renderer or a thumbnail is still open
- * (CLAUDE.md §13.6).
+ * not a PLY), `train` is the trained splat of the highest checkpoint, and
+ * `mesh` is step 5's glTF surface — the third renderer, `GLTFLoader`, which
+ * ships inside `three` and therefore costs no §10 row.
+ *
+ * `mesh` is the one source with no preview file: there is no record format to
+ * decimate a textured glb into, and the reference mesh was 11.6 MB against the
+ * 178 MB splat it came from, so the viewer loads the tool's own output.
  */
-export type PreviewSource = 'sfm' | 'train';
+export type PreviewSource = 'sfm' | 'train' | 'mesh';
 
 /** What the source file turned out to be, not which step wrote it: a step may
  *  produce a plain sparse cloud or a gaussian PLY, and the renderer follows the
  *  file. */
-export type PreviewKind = 'cloud' | 'splat';
+export type PreviewKind = 'cloud' | 'splat' | 'mesh';
 
 export interface PreviewState {
   source: PreviewSource;

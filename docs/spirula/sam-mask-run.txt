@@ -1,0 +1,67 @@
+# Captured 2026-08-28 on this workstation, spirula 2026.8.23.
+# Settles CLAUDE.md §13.3 (basename or full filename for a mask?) and proves the
+# whole mask route: what `sam mask` writes, and that `sfm auto` adopts it unnamed.
+
+### 1. Speculative run, no --shape, 238 rectilinear frames: exit 0, nothing written
+$ spirula --lang en sam mask projects/zz_abort_test/frames --print
+projects/zz_abort_test/frames -- images: 238
+no border found in projects/zz_abort_test/frames; name one with --shape
+projects/zz_abort_test/frames
+[exit 0]
+
+### 2. Named shape: two lines, no per-frame counter, 238 frames in 2.6 s
+$ spirula --lang en sam mask projects/zz_abort_test/frames \
+      --shape "ellipse 0.5,0.5,0.49,0.49" --out <out>
+projects/zz_abort_test/frames -- images: 238
+masks written: 238, in <out>
+[exit 0]   real 0m2.644s
+
+# The files it wrote are <stem>.png -- frame_0001.png beside frame_0001.jpg.
+$ ls <out> | head -3
+frame_0001.png
+frame_0002.png
+frame_0003.png
+
+### 3. Which naming does a reader pair by?  Both. 20 frames, identical numbers.
+$ spirula --lang en sfm extract <20 frames> -o feat_nomask
+[extract] done -- images: 20, features: 88230
+
+$ spirula --lang en sfm extract <20 frames> -o feat_mask --masks <basename masks>
+[extract] 20/20   frame_0020.jpg   Features: 5114   Masked out: 1443
+[extract] done -- images: 20, features: 71301
+[extract] masked out: 16929, over masked images: 20
+
+# The COLMAP convention, frame_0001.jpg.png, gives the byte-identical result:
+$ spirula --lang en sfm extract <20 frames> -o feat_colmap --masks <".jpg.png" masks>
+[extract] 20/20   frame_0020.jpg   Features: 5114   Masked out: 1443
+[extract] done -- images: 20, features: 71301
+[extract] masked out: 16929, over masked images: 20
+
+### 4. `sfm auto` adopts a masks/ sibling of the image directory with NO flag
+$ spirula --lang en sfm auto <dir>/frames -o <dir>/ws_masked --quality low
+[run]     Quality: low   Image size limit: 1000 px   Feature limit: 2048
+[run]     Capture type: individual
+[run]     Lens: opencv   Camera grouping: folder
+[run]     Masks: <dir>\masks                     <-- named itself, no flag passed
+
+$ spirula --lang en sfm auto <dir>/frames -o <dir>/ws_plain --quality low --no-masks
+[run]     Quality: low   Image size limit: 1000 px   Feature limit: 2048
+[run]     Capture type: individual
+[run]     Lens: opencv   Camera grouping: folder
+[run]     The presets set --max-image-size to 1000 (was 0)
+#         ^ no `Masks:` line at all -- --no-masks is the refusal
+
+### 5. `train --mask-dir` DOES take an absolute path outside --data (§13.4)
+# Three 200-iteration runs each way on the same 238-image dataset. The runs are
+# not deterministic, but the two bands do not overlap: masked training treats the
+# masked corners as empty space, which costs ~5 dB of psnr against an image that
+# is not empty there.
+#
+#   --mask-dir <abs, 238 real masks> --apply-loss-for-mask 1
+#       psnr 15.12   17.48   15.18      ssim 0.7947  0.8288  0.7631
+#   --mask-dir <abs path that does not exist> --apply-loss-for-mask 1
+#       psnr 22.40   22.68   20.33      ssim 0.8308  0.7850  0.7960
+#
+# NOTE the trap in the second row: a wrong --mask-dir exits 0 and trains
+# unmasked. `--load-masks` is documented "use the dataset's masks when they
+# exist", so a typo is silent -- which is why step 4 logs the mask count.

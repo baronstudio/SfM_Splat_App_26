@@ -57,6 +57,12 @@ app.include_router(websocket.router)
 mimetypes.add_type("application/octet-stream", ".splat")
 mimetypes.add_type("application/octet-stream", ".pc3d")
 mimetypes.add_type("application/octet-stream", ".ply")
+# Step 5's mesh is served as it stands - there is no decimated copy of a glb
+# (core/preview.py) - so its own types are registered rather than left to the
+# platform's registry, which on Windows answers whatever a 3D app last wrote
+# there.
+mimetypes.add_type("model/gltf-binary", ".glb")
+mimetypes.add_type("model/gltf+json", ".gltf")
 
 # A cancelled download must not leave the file open - see the module.
 file_handles.apply_sync_close()
