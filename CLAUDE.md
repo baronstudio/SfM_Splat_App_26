@@ -283,8 +283,12 @@ carried here as history, not re-derived.
   **92.9 s → 20.5 s**, the real extraction shape **95.5 s → 17.9 s**. FFmpeg treats
   `-hwaccel` as a *preference* — measured on a 4080×4080 h264 source, NVDEC answered
   `CUDA_ERROR_INVALID_VALUE`, FFmpeg decoded in software and **exited 0 with correct
-  frames** — so step 2 matches that line, warns, and records `hwaccel_fell_back` in
-  `extract.json`. A silent 5× regression is worse than a loud failure.
+  frames** — so step 2 matches that line, warns **on the line itself** — a step that fails later
+  for an unrelated reason never reaches an end-of-run note, and the red NVDEC line is
+  then read as the cause — and records `hwaccel_fell_back` in `extract.json`. A silent
+  5× regression is worse than a loud failure. Re-confirmed 2026-08-28 on a 3840×2880
+  h264 source: `cuvidCreateDecoder … CUDA_ERROR_INVALID_VALUE`, software fallback,
+  **exit 0 with correct frames**.
 - **`mpdecimate` defaults to OFF.** It duplicates the overlap gate's job and drops frames
   non-deterministically, breaking the frame-index ↔ timecode mapping that scene detection
   and the timeline depend on.
@@ -296,6 +300,13 @@ carried here as history, not re-derived.
 | `auto` *(default)* | `fps = target_frame_count / duration_s`, clamped to the preset bounds, from ffprobe |
 | `ratio` | `fps = fps_ratio × source_fps`. Default ratio **0.2** — JB's habitual value. On a 100 fps rush that is 20 img/s |
 | `absolute` | A literal fps typed by the user |
+
+**A working fps that cannot place one frame inside the source is refused before
+anything is deleted** (`check_fps_yields_frames`): FFmpeg does not write zero frames,
+it fails — `mjpeg: Task finished with error code: -22` and `Nothing was written into
+output file`, exit non-zero. Measured 2026-08-28: `fps=0.02` over 20 s of a 4K source
+wrote nothing and exited non-zero, the same filter over 60 s wrote one frame and
+exited 0. The probe and the fps resolution therefore sit **above** the step-2 reset.
 
 `ratio` is the fallback whenever ffprobe fails or returns no duration. **Capture presets**
 carry the target frame count and the overlap band together, because they are two views of
@@ -658,11 +669,30 @@ positional argument and it moves the defaults of everything under it, so the pan
 show the *selected preset's* values, not a frozen copy of `3dgs`'s.
 `docs/spirula/train-help-all-<preset>.txt` is one capture per preset for exactly that.
 
+**So `TrainDefaults` stores `None` for "the preset decides", and every tool knob in it
+defaults to that.** `SfmDefaults` could hold the build's numbers as literals because
+`sfm auto` has one global set of them; `train` has seven, and a model holding concrete
+values cannot tell "the user asked for 3" from "3 is what `3dgs` happened to default to".
+Caught in a test rather than in a run: a `TrainDefaults` carrying `3dgs`'s values with
+`meshing` selected built
+`train meshing … --sh-degree 3 --primitive 3dgs --background-mode black`, which is the
+`meshing` preset selected and then entirely undone on its own command line.
+`step_train.preset_defaults()` is the per-preset table, `_moved_from_preset` is the diff,
+and `resolved_values()` is what the log lines and `train_result.json` report — because
+"30 000 iterations" is what the run did whether or not the flag was sent.
+
 **Output.** `<output-dir-prefix>/<output-dir-name>/step-%09d.ckpt/splat.ply`, plus a flat
 `config.json` of every resolved flag beside it. `--save-only-latest-checkpoint` defaults
 **1**, so one checkpoint survives a run — confirmed on a 3 000-iteration run, where
 `step-000002000.ckpt/` was gone by the end and only `step-000003000.ckpt/` remained. A
 `state.tar` is written beside `splat.ply` even with `--save-full-checkpoint 0`.
+
+**The bar's `splats N` is not the count in the file.** It is the live count, and the
+final prune runs after the last bar line: two 30 000-iteration runs printed the
+1 000 000 cap and wrote **715 890** and **716 831** gaussians. `train_result.json`
+carries both — `num_gaussians` from the line, `splat_count` off the PLY header — and
+anything reporting what the run *produced* reads the second. The cap warning reads the
+first, because reaching the cap during training is what it is about.
 
 **`splat.ply` is a standard 3DGS PLY and `core/ply.py` reads it unmodified.** Proven, not
 assumed — the copied parser was pointed at a real one:
@@ -694,6 +724,20 @@ exactly the `ignore` / `segment` pair `3DGS_App_26` measured on 2026-08-26, thre
 pixels from the loss and deletes nothing already there. An option that cannot be told
 from `Off` is worse than a missing one. So `TrainDefaults.apply_loss_for_mask` ships
 `True` and the UI does not offer the other position under the masked route.
+
+**Unlike step 3, the masks cost a flag here, and it is the one unmeasured path in the
+step.** `sfm auto` adopts a `masks/` sibling of the *image directory* by itself (§5.2),
+but `train --mask-dir` defaults to `masks` relative to **`--data`** — i.e.
+`<project>/sfm/masks`, which this layout never creates. So step 4 passes
+`--mask-dir <project>/masks` **absolutely**, on the same symmetry argument §5.2 makes and
+with the same caveat: identical help text to `--image-dir`, never measured (§13.4). The
+run says so in the log, so a training that reports no masks names its own suspect.
+
+The same asymmetry runs the other way for geometry: `sfm/depths` and `sfm/normals` sit
+*inside* `--data`, so `--depth-dir` and `--normal-dir` keep their relative defaults and
+cost nothing. What the step does send is a refusal — `--load-masks 0`, `--load-depths 0`,
+`--load-normals 0` — for whichever directory is empty, rather than pointing the trainer
+at one that is not there.
 
 `--mask-boundary-offset` grows or shrinks the masks by a **fraction of the image size**
 (signed). It has no LichtFeld Studio equivalent and is the nearest thing this project has
@@ -801,7 +845,31 @@ decimated binary copy into `projects/<slug>/preview/`, served by the `/static` m
 
 **The camera overlay** reads `sfm/sparse/0/images.bin` (§7.1: binary, not text). Frustums
 are coloured per sequence and the path breaks at each cut. Everything in the view sits in
-one frame and takes the single `Rx-90` of §7.3.
+one frame and takes the single `Rx-90` of §7.3 — applied on **one scene-root node**, not
+per object, which is what §7.3's measurement bought.
+
+**A COLMAP camera looks down `+Z`, and that is measured too.** COLMAP is OpenCV-framed
+(+X right, +Y down, +Z forward) where three.js looks down `-Z`, so the frustum the
+predecessor built for RealityScan's OpenGL `transform_matrix` opens the wrong way here.
+Counted rather than argued, by cheirality on the 300-image model: over 60 cameras,
+**623 836** sparse points project inside the image frame with the camera looking down +Z
+against **69 842** looking down -Z, a factor of **8.9**. Pointing it the other way is not
+subtle — every frustum in an orbit opens away from the subject it was aimed at.
+
+**The frustum is drawn at the lens the reconstruction solved**, read off `cameras.bin`:
+`2·atan(width / 2f)`, which on the reference project is `PINHOLE 960×720 f=447.3` →
+**94.0°** at 4:3. A fisheye or equirectangular group answers **no fov** — there is no
+single horizontal angle a wire frustum stands for — and the overlay falls back to its own
+shape rather than drawing 16:9 pinholes over a 360 rig (§1). `cameras.bin` has no length
+field per record, so an unknown model id stops the read instead of guessing a stride;
+width and height come before the parameters, so the aspect survives even then.
+
+**The preview sources are found, not named.** `sfm` is whichever `sparse/N`
+`colmap.find_model` accepts as complete, so a run killed between `cameras.bin` and
+`points3D.bin` reports nothing to preview instead of feeding the parser a stub; `train` is
+the **highest** `step-*.ckpt` under `train/`, globbed rather than assumed, because
+`--save-only-latest-checkpoint` defaulting to 1 is the tool's default and not a promise
+(§7.6). Step 5's mesh is deliberately not a source — see §13.6.
 
 **Step 5's mesh is an open question** (§13): a textured mesh is neither a point cloud nor
 a splat, so it is either a third renderer (three.js loads glTF natively — `GLTFLoader`
@@ -864,6 +932,7 @@ GET    /api/files/{project}/frames     frame list + curation verdicts
 GET    /api/files/{project}/analysis   scores.json + selection.json + overrides
 GET    /api/files/{project}/sources    input/ listing: probe + poster frame per video
 GET    /api/files/{project}/masks      what masks/ holds and where they came from
+GET    /api/files/{project}/train      train_result.json + what --data and --image-dir will read
 GET    /api/files/{project}/preview    3D preview state (?source=sfm|train|mesh&max_count=)
 POST   /api/files/{project}/preview    build that preview — returns at once, poll the GET
 GET    /api/files/{project}/cameras    camera poses of the last reconstruction, for the overlay
@@ -941,7 +1010,27 @@ Any new dependency → add a row here in the same commit.
 | 2026-08-27 | **PLY-with-texture and OBJ-with-vertex-colour are a UI precondition, not a warning, because the refusal costs the whole mesh.** Measured: `mesh --format glb,ply --color texture` answered `error: PLY does not support textured meshes; use vertex color (or export OBJ/GLTF/GLB)` and exited **1 having written nothing — not even the glb it was also asked for**. It is not a per-format skip. The step must refuse the combination before spending the 204 s the reference mesh took. |
 | 2026-08-27 | **`sam mask` is the 360 story and it is free; `sam track` is the AI one and it has a licence question.** They are one setting with a mode rather than two features because their costs differ by everything. `sam mask` needs no model and no download — it masks what is never scene in any frame, a fisheye border or a watermark or the rig, "a shape, not an object" — and it is safe to run speculatively: on 251 rectilinear images it answered `no border found …; name one with --shape` and exited 0 without writing. Without `--replace` it *intersects* with the masks already there, which is how it stacks on top of a model's. `sam track` needs a SAM checkpoint, and **SAM 2.1 is Apache-2.0 while SAM 3 is Meta's own non-standard licence** — two rows in §10, shown and accepted separately before any fetch. Its default polarity is already what a reconstruction wants (prompted objects black, everything else white), so there is no invert question to measure; `--keep-prompted` names the other case. |
 | 2026-08-27 | **`core/ply.py` is copied unchanged, and that was checked rather than assumed.** Pointed at a real `splat.ply` from a 3 000-iteration run it answers `kind: splat, count: 140942, binary_little_endian, 62 properties, 248 B/vertex`. The property order is the INRIA one — `x y z nx ny nz f_dc_0..2 f_rest_0..44 opacity scale_0..2 rot_0..3`, unused normals and all — which is *not* the order this project's brief predicted; it does not matter, because `ply.py` reads by property name and detects the kind from the presence of `f_dc_0`/`opacity`/`scale_0`/`rot_0`. Written down anyway, because a reader that assumed the other common order would produce plausible garbage rather than an error. |
+| 2026-08-27 | **A knob still at the build's own default is not put on the command line, because naming a flag overrides the preset that would otherwise set it.** `sfm auto`'s help says it outright — "Anything they set can be overridden by naming the flag explicitly" — and the run says it too: the 300-image run below answered `The presets set --max-image-size to 2400 (was 0)` and `The presets set --aliked-max-features to 4096 (was 2048)`. So `SfmDefaults` ships the build's numbers (`pairs auto`, `camera-model opencv`, `camera-mode folder`, `max-image-size 0`, `max-features 8192`) and `step_sfm._moved_from_build_default` sends only what the user actually moved. The alternative — dumping the whole resolved block onto the command line — reads as harmless because every value equals the default, and it silently disables `--quality` and `--data-type`: `--quality medium` would still print its preset lines while `--max-features 8192` sat further along the same command line undoing them. `--quality` and `--data-type` are the exception and are always sent; they *are* the presets. The same rule will apply to `train`, where seven presets move far more than five flags. |
+| 2026-08-27 | **Step 3 runs, measured on a real project: 300 images at `--quality high` in 51.09 s, 300/300 registered, 0.35 px mean reprojection, 109 132 points, one camera group, exit 0.** Frames were 25 % of a 4K DJI rush, so ~960×540. Two numbers to carry: `high` sets `--max-image-size` to **2400** (against 1600 for `medium` in §7.1's reference run), and the whole `sfm/` workspace is **202 MB** for 300 images — features dominate it, and it is all deleted and rebuilt by a re-run. Extraction 5.30 s, matching 8.34 s (5961/5962 pairs kept), mapping 37.45 s: mapping is the phase worth a bar, which is why it owns 0.38→0.95 of it. `core/colmap.py` was pointed at the model this produced and read it unmodified — `sparse/0`, 300 images, 109 132 points — so §7.9's camera overlay and the `.pc3d` preview have a validated parser before P1.5 starts. |
+| 2026-08-27 | **`Reprojection error:` is why step 3's log classifier cannot match a bare `error`.** The line that carries the headline quality number of a *successful* reconstruction — `[run] Reprojection error: mean 0.351 px, median 0.245 px, over 730476 observations` — contains the token `error:` verbatim, so the obvious pattern paints every good run red in the LiveLog. `_ERROR_LINE` is `(?<!reprojection )\berror:`, and the smoke check asserts that exact line classifies INFO. Caught by the check rather than by a user, which is the whole point of writing the check against lines the tool really printed. |
+| 2026-08-27 | **The extractor's per-image narration is dropped before it reaches the bus, because the LiveLog keeps 500 lines and one run printed 1682.** `sfm auto` narrates its keypoint pyramid three lines deep for every image — `Octaves:`, `Oriented:`, `Features:` — and only the fourth names the file they were about. On the 300-image run that is **900 lines of the 1682**, and they pushed the run's own header (`Quality: high  Image size limit: 2400 px`, `The presets set …`) out of the buffer before the reconstruction was a third done: the four lines that say what the run is doing, lost to the three that describe one image's octaves. `_EXTRACT_NOISE` drops them and every one of the 300 `[extract] N/300` counter lines survives, replayed against the real log to prove it. The durable answer lives in `sfm/sfm_result.json` and step 3's report panel either way — a log line is gone on the next page load. |
+| 2026-08-27 | **`project_ops` moves to §14.1's table, and `masks/` stays with step 2.** `PROJECT_SUBDIRS` loses `rc_output/`, `lfs_output/` and `region/` and gains `sfm/`, `train/`, `mesh/`; `STEP_ARTEFACTS` becomes 3→`sfm/`, 4→`train/`, 5→`mesh/`+`export/`. `masks/` is listed under step 2, which *writes* it, and never under step 3, which only reads it: they are an input to the reconstruction rather than an output of it, so re-running the alignment must not cost the mask run that fed it. This is the table `step_sfm`'s `reset_steps(project, [3])` depends on, and it was wrong until this commit — a step-3 reset would have cleared RealityScan's dead `rc_output/` and left the sparse model in place. |
 | 2026-08-27 | **The sparse model is COLMAP *binary*, and `--help` is captured per preset because the presets move the defaults.** `sfm auto` writes `cameras.bin` / `images.bin` / `points3D.bin`, not the text form RealityScan wrote — the camera overlay and every model reader here parse `.bin`. And `train`'s defaults are per-preset: `docs/spirula/` holds one `--help-all` capture for each of the seven, because a panel showing `3dgs`'s numbers while `meshing` is selected would be lying about `--primitive` (3dgut), `--sh-degree` (0), `--background-mode` (noise) and six regularisation weights. **There are seven presets and `--help` prints six** — `academic-baseline` is unlisted and works, exit 0, differing from `3dgs` in four flags. |
+
+| 2026-08-27 | **The camera overlay's frustum opens down `+Z`, by cheirality rather than by convention-reading.** The poses now come from COLMAP's `images.bin` instead of RealityScan's `transforms.json`, and the two disagree about which way a camera faces: COLMAP is OpenCV-framed and looks down **+Z**, three.js looks down **-Z**, so the inherited `cameraRig.ts` built its image plane at `-depth` and would have opened every frustum away from the subject. Counted on the 300-image model — for each of 60 cameras, project the whole sparse cloud and count what lands inside the image: **623 836** points at +Z against **69 842** at -Z, **8.9×**. A weaker test on the same model (does the view direction point at the cloud's centroid?) answers +0.286 against -0.286 mean cosine — the right sign, but only 60 % of cameras, because this capture looks outward; the cheirality count is the one that settles it. The frustum is also drawn at the *solved* lens, `2·atan(w/2f)` off `cameras.bin` — 94.0° at 4:3 here — and a fisheye or equirectangular group returns **no fov** rather than a confident 16:9 lie (§1). |
+| 2026-08-27 | **§7.3's measurement is cashed in as one scene-root node, and `frame.ts` shrinks from a per-object rule to a single rotation.** The predecessor needed per-object logic because it reconciled three frames — RC's Y-down export, LFS's Y-up splat, a third for the overlay. Here the cloud, the splat and the poses are in one frame (90.1 % occupancy overlap at identity), so `PointCloudCanvas` hangs everything off one `Group` carrying `Rx-90` and `SplatCanvas` passes the same rotation as a quaternion to the splat scene and to the rig. `isYDownFrame` and the `flipCloud`/`flipCameras` prop pair are deleted, not ported. "Flip up" survives as one flag, and it is now a question about the capture — the mapper levels on the cameras and can pick the wrong vertical — rather than a repair of a convention mismatch. Confirmed independently on this project: the sparse cloud's thinnest principal axis reads `(0.001, -0.095, 0.996)`, +Z up, a second dataset agreeing with §7.3's two readings. |
+| 2026-08-27 | **The sparse cloud reaches the viewer through the `.pc3d` path unchanged, but the *source* is not a PLY and `ply.py` was not bent into pretending it is.** `sfm auto` writes COLMAP binary, so `colmap.iter_points` streams `points3D.bin` and a new `ply.write_cloud` consumes any `(x, y, z, r, g, b)` stream into the existing 16-byte record — the format stays in one module and the PLY reader keeps its job. Measured on the 300-image project: 61 859 points → **989 760 B** (61 859 × 16 + 16, exact), and the decimated level round-trips the centroid — 10 000 points centre `(0.193, 0.435, -0.091)` against the full cloud's `(0.190, 0.433, -0.093)`, which is the uniform-spread guarantee holding rather than the head slice §7.9 forbids. `/api/files/{id}/preview` now takes `source=sfm|train` and answers **400** naming both for anything else; the old `rc`/`lfs`/`export` table is gone. |
+
+| 2026-08-27 | **`TrainDefaults` stores `None` for every tool knob, meaning "the preset decides", because the baseline moves with the preset.** `SfmDefaults` diffs against a literal `_BUILD_DEFAULTS` because `sfm auto` has one global set of defaults; `train` has seven, one per preset, and `meshing` alone moves `--primitive` (3dgut), `--sh-degree` (0) and `--background-mode` (noise). A model holding concrete numbers therefore cannot distinguish "the user asked for 3" from "3 is what `3dgs` defaulted to" — and the failure is silent and total. Caught by a test of the command builder before any run: `TrainDefaults(preset="meshing")` carrying `3dgs`'s stored values built `train meshing … --sh-degree 3 --primitive 3dgs --background-mode black`, selecting the preset and then undoing every part of it on the same command line. So `None` is the default of all eighteen knobs, `step_train.preset_defaults()` is the per-preset table (mirrored in `TrainSettings.tsx`, both read off `docs/spirula/train-help-all-<preset>.txt`), and the panel draws the *selected* preset's value in place of an unset knob rather than a frozen copy of `3dgs`'s. `resolved_values()` fills them in for the log line and `train_result.json`, because "30 000 iterations" is what the run did whether or not the flag was sent. The four `load_*` / `apply_*` switches are exempt: they are intent, resolved against what is actually on disk. |
+| 2026-08-27 | **Step 4 runs, measured on the same project: 300 iterations at `--quality low` in 3.0 s, exit 0, 61 859 splats, psnr 24.00, ssim 0.739, `splat.ply` 14.6 MB, found at `train/run/step-000000300.ckpt/`.** Deliberately short — what needed proving was the channel, not the picture. Three things it settled. The bar mapped 0.053 → 0.950 across four lines, which is §7.7's 5–95 % window behaving; the `.splat` preview path took the result unmodified (`kind: splat`, 61 859 × 32 B = 1 979 488 B exactly), so §7.9's decimated viewer route is validated on a real trained file rather than on the sparse cloud alone; and **§7.7's warning about bare-integer metric values was not hypothetical** — step 1 printed `ssim=0  psnr=0` and the last line printed `psnr=24`, so a `\d+\.\d+` pattern would have dropped exactly the first and last points of every run's chart. The command line carried `--num-iterations 300 --quality low --load-masks 0 --load-depths 0 --load-normals 0` and nothing else: everything at the preset's own value stayed off it. |
+| 2026-08-27 | **A message's type does not decide whether its *text* is shown either — the sibling of §15.2, and it was silently eating whole runs.** `websocket.py` types a message `metric` the moment it carries `data`, and the store's `metric` case only fed the chart. Step 4 carries data on every one of its bar lines, and the trainer says nothing else between loading the dataset and finishing, so the LiveLog would have been **empty for the entire length of a training run** — and step 3's one SUCCESS line, the one naming the registered count, was already being swallowed the same way. The store now pushes a log entry for any message with a `message`, before the switch, exactly where it already reads `progress` before the switch. Same reasoning as 2026-08-20's: the type says what a message is mainly about, not which of its fields may be used. |
+| 2026-08-28 | **The pipeline runs end to end from the UI, and the three wall clocks are these.** One throwaway project on the reference rush — 79.5 s of 4K/100 fps 10-bit HEVC, `-hwaccel cuda`, no fallback. Step 2: 238 frames at 3 fps and 25 % scale in **80.4 s**. Step 3, `--quality high --data-type video`: **41.1 s** of tool inside 45.3 s of wall, **238/238 registered**, 0.341 px mean and 0.238 px median over 562 142 observations, 98 025 points, one camera group, exit 0. Step 4, `3dgs` at 30 000 iterations: **956 s**, exit 0, psnr 38.66, ssim 0.9713, rgb_loss 0.01237, `splat.ply` 177 775 619 B. The bar moved throughout: §7.7's window was watched live on the bus, `step 1` landing at exactly **5.0 %** and the run climbing to 95 % before the checkpoint. **Abort was tested on each of the three**, on the throwaway rather than on the reference project, because §14.1's re-run-is-a-reset rule means an aborted step 3 costs the sparse model: `ffmpeg` and `spirula` were both gone from the process table within seconds, the frame count froze, and every step reported `aborted` rather than `error`. What an aborted step 3 leaves is worth writing down — `sfm/features/` and **no `sfm_result.json`** — because that is exactly what makes `colmap.find_model` report nothing to preview instead of handing the parser a half-written model. |
+| 2026-08-28 | **Both viewers were finally looked at in a browser, and the standing caveat on P1.5 and P1.6 is closed.** Everything about them had been verified numerically — the `.pc3d` byte count exact, the poses parsed, the frustum direction settled by cheirality at 8.9× — and none of it had been watched. Driven headed through Playwright on the workstation's own GPU, because software GL cannot sort 715 890 gaussians inside a screenshot timeout. The sparse cloud draws with its 300 frustums in one arc **opening onto the wall they were aimed at**, which is §7.9's measurement seen rather than counted; the trained splat renders as the basement window that was filmed, sorted and alpha-blended, with the camera overlay on top of it. No console error on either page. The screenshots are also what caught the two defects below and the stale RealityCapture help panel, none of which any server-side check could have found. |
+| 2026-08-28 | **The LiveLog was showing every line twice, and the cause was two sockets in one page rather than two broadcasts.** Counted before guessing: a lone socket received each `step N/M` line **exactly once** (12 distinct texts, 12 messages, over 40 s of a training run), while the page showed each of them twice. `useWebSocket.connect` bailed only on `readyState === OPEN`, and StrictMode's mount→cleanup→mount cycle closes the first socket while it is still `CONNECTING` — so the second mount saw a non-OPEN socket and opened a second one beside it, and the first socket's late `onclose` then cleared `wsRef` and scheduled a *third*. `CONNECTING` now counts as "already have one", and an `onclose` from a socket that is no longer `wsRef.current` returns without reporting or reconnecting. Verified by URL rather than by eye: one live `ws://…/ws/logs` where there were two. This halved the LiveLog's usable 500-line buffer, which is the same buffer §12's 2026-08-27 `_EXTRACT_NOISE` row was written to protect. |
+| 2026-08-28 | **The splat count the app reported was the cap, not the file, on every capped run.** `train_result.json` took `num_gaussians` from the last bar line, and that is the *live* count — the final prune runs after it. Two 30 000-iteration runs both printed `splats 1000000` and wrote **715 890** and **716 831** gaussians, ~28 % fewer, and the step-4 card repeated the cap next to a `splat.ply` size that could not hold that many. Worse, the card's amber "the run finished at its splat cap, raise Max splats" advice was being read off a number that did not describe the output. So `step_train` now reads the count off the PLY header (`ply.read_header`, header only, free on a 170 MB file, and never allowed to fail the step) into a new `splat_count`, the card shows that, and the cap warning stays keyed on `num_gaussians` — because reaching the cap *during* training is what the warning is actually about, and both numbers are true about different moments. |
+
+| 2026-08-28 | **A working fps too low to place one frame in the source is refused before the run, because FFmpeg does not extract zero frames — it fails.** A project left `fps_mode: absolute` at **0.001** against a 139.21 s rush asked for one frame every 1000 s, and FFmpeg answered `[vost#0:0/mjpeg] Task finished with error code: -22 (Invalid argument)` / `Nothing was written into output file, because at least one of its streams received no packets` and exited non-zero, so step 2 died on an `-22 Invalid argument` tail that names nothing the user set. Measured on that same 3840x2880 h264 source: `fps=0.02` over 20 s wrote nothing and exited non-zero, the identical filter over 60 s wrote one frame and exited 0 — the `fps` filter samples at the centre of each period, so a run needs roughly `duration >= 1/(2*fps)`. `check_fps_yields_frames` refuses `fps x duration < 1` naming the fps that would work, and the panel's estimate turns amber at the same threshold instead of quietly reading `= 0 frames`. **The probe and the fps resolution moved above `_clear_previous_run`** for it: the check has to run before the reset or an unusable setting deletes the frames it cannot re-extract, which is §14.1's rule and the exact trap `resolve_ffmpeg_path` was hoisted out of on 2026-08-24. |
+| 2026-08-28 | **The `-hwaccel` fallback explains itself where it happens, because a step that fails afterwards never reaches the end of the run.** The same project's log ended on `decoder->cvdl->cuvidCreateDecoder(...) failed -> CUDA_ERROR_INVALID_VALUE` / `Failed setup for format cuda`, in red, and that is what got reported as the cause of a failure that was really the fps above. §6.1 already had the measurement — FFmpeg treats `-hwaccel` as a preference and decodes in software — and it was re-confirmed on this source: 3 s at `-hwaccel cuda`, same NVDEC refusal, **exit 0 with correct frames**, software fallback at 1.41x. The reassurance was only broadcast *after* a successful run, i.e. never on the runs that need it. It now goes out on the first `_HWACCEL_FAILED` line instead, and `extract.json` keeps `hwaccel_fell_back` as before. |
 
 Any new structural decision → add a row here in the same commit.
 
@@ -956,19 +1045,41 @@ comes next. The genuinely open questions, in the order they block something:
    thing that could force a junction into §5's layout. The verification run read the
    dataset (`251 images, 2 cameras`) and was then killed during the 419 MB checkpoint
    download, so this is unmeasured. Finish the download and re-run.
-2. **Are `--mask-dir`, `--depth-dir` and `--normal-dir` absolute-path-capable like
+2. **A curation verdict is advisory, and that is a consequence nobody chose.** Step 3
+   is handed the image *directory*, and §5.2's whole point is that there is no second,
+   filtered copy of the frames anywhere — step 4 trains on the same `frames/`. So
+   `selection.json` marks a frame `rejected:blur` and `sfm auto` reconstructs it anyway;
+   only the gallery's Delete actually removes it. Step 3's panel says so where the user
+   can see it rather than pretending otherwise. Three ways out, and it is **JB's call**:
+   leave it advisory and lean on Delete; move the rejected frames to
+   `frames/_rejected/` in step 2 (a move, not a copy, so §5.2 survives intact, and it
+   is reversible); or accept them and rely on the mapper's own rejection. Nothing is
+   implemented until that is decided.
+3. **Do `sfm auto` and `train` pair a mask to its frame by basename or by full
+   filename?** `masks/` holds `frame_0001.png` beside `frames/frame_0001.jpg`, which is
+   what step 2's alpha extraction writes and what LichtFeld Studio read; COLMAP's own
+   convention is `frame_0001.jpg.png`. Unmeasured — the reference runs had an empty
+   `masks/`, so `--no-masks` was sent and the question never arose. Cheap to settle with
+   one masked run, and until then step 3 says in the log which convention it assumed.
+4. **Are `--mask-dir`, `--depth-dir` and `--normal-dir` absolute-path-capable like
    `--image-dir`?** (§5.2) Assumed by symmetry from their identical help text; not
    measured. Cheap to settle.
-3. **The MoGe / Metric3D checkpoint licences** (§10). Downloaded from HuggingFace, not
+5. **The MoGe / Metric3D checkpoint licences** (§10). Downloaded from HuggingFace, not
    yet audited, and the audit table says so rather than guessing.
-4. **Does step 5's mesh get its own viewer mode, or a thumbnail?** (§7.9) A textured mesh
+6. **Does step 5's mesh get its own viewer mode, or a thumbnail?** (§7.9) A textured mesh
    is neither a point cloud nor a splat. `GLTFLoader` ships inside `three`, so a third
    renderer costs no dependency — but it does cost a third code path in the viewer.
    Undecided, and JB's call.
-5. **`--progress-dir`'s binary channel** (§7.2). `model.bin` + `pairs.bin` snapshots
+7. **The WS bus carries no project id, so the store applies every message to whatever
+   project is open.** Seen in P1.7: step 4 of the reference project displayed a second
+   project's bar at 56 % with a live ETA. `/api/pipeline/start` refuses a second run
+   only *for the same project*, so nothing enforces §1's "one running job at a time"
+   across projects. Two ways out — put `project_id` on every message and filter in the
+   store, or refuse a start while any project is running — and it is **JB's call**.
+8. **`--progress-dir`'s binary channel** (§7.2). `model.bin` + `pairs.bin` snapshots
    while `sfm auto` runs, for a front end that shows the reconstruction assembling rather
    than tailing its log. A refinement, after the stdout bar works.
-6. **`spirula sfm` has five stages under `auto`** — `extract`, `match`, `map`, `merge`,
+9. **`spirula sfm` has five stages under `auto`** — `extract`, `match`, `map`, `merge`,
    `ba` — each runnable alone and each reading and writing COLMAP's formats, "so any one
    of them can be replaced by COLMAP's equivalent to bisect a failure". Not modelled;
    worth remembering the day a reconstruction fails and nobody can tell which stage lost

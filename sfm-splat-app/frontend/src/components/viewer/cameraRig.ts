@@ -5,11 +5,20 @@ import type { CameraPose } from '@/types';
  * The camera overlay: one wire frustum per registered camera, plus the path
  * they were shot along.
  *
- * `transform_matrix` in the RC export is camera-to-world in the OpenGL frame —
- * three.js's own frame — so the basis goes in untouched and the frustum opens
- * down -Z like a real camera. Everything is merged into two draw calls: at 300
- * cameras a `THREE.Group` of 300 meshes costs more to traverse than the splats
- * cost to draw.
+ * The poses come from `sfm/sparse/0/images.bin` — COLMAP binary, not the
+ * `transforms.json` the predecessor read (CLAUDE.md §7.1) — and that changes
+ * which way a frustum points. COLMAP is OpenCV-framed: +X right, +Y **down**,
+ * and the camera looks down **+Z**, where three.js's own convention looks down
+ * -Z. `colmap.read_images` hands out `R^T`, so `basis · (0, 0, 1)` is the
+ * viewing direction and the image plane below is built at +depth. Pointing it
+ * the other way is not a subtle error: every frustum in an orbit would open
+ * away from the subject it was aimed at.
+ *
+ * The whole rig then takes the scene's single `Rx-90` (`frame.ts`) along with
+ * the cloud and the splat, because all three are in one frame here.
+ *
+ * Everything is merged into two draw calls: at 300 cameras a `THREE.Group` of
+ * 300 meshes costs more to traverse than the splats cost to draw.
  */
 
 /** Cyan first: with one sequence every camera is cyan, which is the common case. */
@@ -81,13 +90,14 @@ export function buildCameraRig(
   const halfWidth = Math.tan(fovX / 2) * depth;
   const halfHeight = halfWidth / aspect;
 
-  // Apex + the four image-plane corners, in camera space (looking down -Z).
+  // Apex + the four image-plane corners, in COLMAP camera space: looking down
+  // +Z, with +Y downwards, so the first corner is the image's top-left.
   const local = [
     new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(-halfWidth, -halfHeight, -depth),
-    new THREE.Vector3(halfWidth, -halfHeight, -depth),
-    new THREE.Vector3(halfWidth, halfHeight, -depth),
-    new THREE.Vector3(-halfWidth, halfHeight, -depth),
+    new THREE.Vector3(-halfWidth, -halfHeight, depth),
+    new THREE.Vector3(halfWidth, -halfHeight, depth),
+    new THREE.Vector3(halfWidth, halfHeight, depth),
+    new THREE.Vector3(-halfWidth, halfHeight, depth),
   ];
   const edges: [number, number][] = [
     [0, 1], [0, 2], [0, 3], [0, 4],   // the four rays

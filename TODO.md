@@ -3,8 +3,12 @@
 Prioritised worklist. [CLAUDE.md](CLAUDE.md) is the spec; this is what comes next.
 Phases are ordered by what unblocks what, not by what is interesting.
 
-Status: **P0 done** — the tool is verified, the doctrine is written, the modules are
-copied. Nothing in the pipeline runs yet.
+Status: **P1.1–P1.7 done** — a video goes in one end and a `splat.ply` comes out the
+other, from the UI, at real length, with the bar moving and abort working at every step.
+The P1.7 run: 79.5 s of 4K/100 fps 10-bit HEVC → 238 frames in **80.4 s** → 238/238
+registered at 0.341 px in **45.3 s** → 30 000 iterations in **956 s**, psnr 38.66, a
+716 831-gaussian `splat.ply`. Both viewers were finally looked at in a browser and both
+draw. Next: P2 (steps 5-6), with the three defects P1.7 turned up listed under it.
 
 ---
 
@@ -43,17 +47,31 @@ video goes in one end and a `splat.ply` comes out the other.
       `core/cameras.py` (reads RealityScan's `transforms.json`; must read
       `sfm/sparse/0/images.bin`), `core/pipeline_runner.py` (`_STEP_NAMES`,
       `_STEP_RUNNERS`), `core/defaults.py` (done — the five spirula blocks are in).
-- [ ] **Frontend builds with steps 3-6 as empty shells.** `Step3_RC.tsx` and
-      `Step4_LFS.tsx` are deleted; `Step3_Sfm`, `Step4_Train`, `Step5_Mesh`,
-      `Step6_Scene` are placeholders that render their step name and nothing else.
-      `RCSettings.tsx` / `LFSSettings.tsx` are gone; the settings drawer loses those
-      sections until P1.4 and P1.6 add theirs.
+- [x] `core/steps/spirula.py`, `core/colmap.py` — the latter validated against a real
+      300-image `sparse/0` written by step 3, so P1.5's parser is already proven.
+- [x] **Frontend builds with steps 3-6 as empty shells.** `Step3_RC.tsx` and
+      `Step4_LFS.tsx` are deleted; `Step4_Train`, `Step5_Mesh`, `Step6_Scene` are
+      placeholders that render their step name and nothing else. `RCSettings.tsx` /
+      `LFSSettings.tsx` are gone. `StepNav`'s labels were still "RS Alignment" and
+      "LFS Training" until P1.5 — the wizard named two tools this app does not have.
+- [ ] **`types/index.ts` still carries the dead RC/LFS type block** — `RCDefaults`,
+      `RegionDefaults`, `RegionState`, `MaskGenerationDefaults`, `MaskReport`,
+      `AlignmentReport`, `LFSDefaults`. Referenced by nothing (checked), so deleting
+      them is a `tsc` away; left standing only to keep P1.5's diff about the viewer.
 - [ ] `core/config.py`: `rc_exe_path`, `lfs_exe_path` and `supersplat_url` out;
       `spirula_exe_path` and `spirula_model_cache` in. Keep `ffmpeg_path` and
       `ffmpeg_hwaccel`.
 - [ ] `setup.py` fetches `spirula.exe` from the GitHub release rather than cloning
       LichtFeld Studio, and auto-detects FFmpeg on `PATH` as before.
 - [ ] Delete `docs/rs/` references and the RealityScan sections from `README.md`.
+- [ ] **The in-app HELP panel is still the predecessor's, and it is on screen during
+      every run.** Its rail reads `3 · RC` / `4 · LFS` / `5 · Export`, step 3 is titled
+      "Reality Capture — Alignment & Export" and tells the user to set the RealityCapture
+      path in Settings and read `rc_output/`, step 4 is "LFS — Gaussian Splat Training".
+      Seen in the P1.7 browser pass, beside a step 3 panel correctly reporting a spirula
+      run. Same commit should take the app's own name: `version.APP_NAME`,
+      `AppTitle.tsx`'s fallback, `public/help/`, `requirements.txt` and
+      `step_scene.py`'s export README all still say "3DGS Pipeline App".
 
 ### P1.2 Steps 1 and 2 work unchanged
 
@@ -76,58 +94,141 @@ CLAUDE.md §7.0 has four rules that must not be re-implemented four times.
 - [ ] Bool flags render as `0`/`1`; `sfm auto`'s bare `--no-x` switches are the
       exception and get their own helper.
 
-### P1.4 Step 3 — `step_sfm.py`
+### P1.4 Step 3 — `step_sfm.py` ✅
 
-- [ ] `spirula sfm auto <frames> -o <project>/sfm`, with `SfmDefaults` on the command
+- [x] `spirula sfm auto <frames> -o <project>/sfm`, with `SfmDefaults` on the command
       line and `reset_steps(project, [3])` **after** the exe and `frames/` are located
       and before the first byte is written (§14.1).
-- [ ] Parse the tagged stdout for the bar: `[extract] N/total`, then
+- [x] **Only the knobs the user moved go on the command line.** Naming a flag overrides
+      the preset that would otherwise set it, so a value equal to the build's own default
+      is left off — otherwise `--max-features 8192` silently undoes `--quality medium`
+      (§12, 2026-08-27). `--quality` and `--data-type` are always sent; they are the
+      presets.
+- [x] Parse the tagged stdout for the bar: `[extract] N/total`, then
       `[map] images in the model: N` (§7.2). Remember the extraction order is not the
       filename order.
-- [ ] **Handle exit 3 as a warning, never a failure** (§7.1). Persist the exit code, the
+- [x] Drop the extractor's three-lines-per-image narration before it reaches the bus —
+      900 lines of 1682 on the reference run, against a 500-line LiveLog.
+- [x] **Handle exit 3 as a warning, never a failure** (§7.1). Persist the exit code, the
       registered/total pair, the reprojection error and the `sparse/N` count to
       `sfm/sfm_result.json`.
-- [ ] Warn when more than one `sparse/N` exists — a fragmented capture, and the thing to
+- [x] Warn when more than one `sparse/N` exists — a fragmented capture, and the thing to
       raise `--overlap` or switch `--data-type video` for.
-- [ ] `SfmSettings.tsx`: quality, data type, camera model (the 360/fisheye entries are
-      the point), pairs, max features, use masks.
+- [x] `SfmSettings.tsx`: quality, data type, camera model (the 360/fisheye entries are
+      the point), pairs, max features, use masks — plus `Step3_Sfm.tsx` with the report
+      panel that outlives the scrollback, and the `sfm` section of `AppSetupPanel`.
+- [x] `project_ops` moved to §14.1's artefact table — the reset `step_sfm` depends on
+      was still pointing at `rc_output/`.
+- [ ] **Verified on this workstation, not on a 360 source.** `--camera-model
+      equirectangular` and the fisheye entries are offered and untested (P4).
 
-### P1.5 Step 3's viewer
+### P1.5 Step 3's viewer ✅
 
-- [ ] Read `sfm/sparse/0/points3D.bin` and `images.bin` — **binary, not text** (§7.1).
+- [x] Read `sfm/sparse/0/points3D.bin` and `images.bin` — **binary, not text** (§7.1).
       The predecessor's `cameras.py` parsed RealityScan's `transforms.json` and none of
       it survives.
-- [ ] `core/ply.py`'s `.pc3d` preview path is unchanged; the source is a COLMAP binary
+- [x] `core/ply.py`'s `.pc3d` preview path is unchanged; the source is a COLMAP binary
       model rather than a PLY, so the conversion is new and the preview format is not.
-- [ ] **One `Rx-90` on the scene root**, for everything (§7.3). Delete `viewer/frame.ts`'s
-      per-object logic rather than porting it; keep the "Flip up" toggle.
+      `ply.write_cloud` takes any `(x, y, z, r, g, b)` stream; `colmap.iter_points` is
+      the one that feeds it. 61 859 points → 989 760 B, exact.
+- [x] **One `Rx-90` on the scene root**, for everything (§7.3). `viewer/frame.ts`'s
+      per-object logic deleted rather than ported; the "Flip up" toggle stays, and it is
+      a question about the capture now rather than a convention repair.
+- [x] **The frustum opens down `+Z`** — COLMAP is OpenCV-framed and the inherited rig was
+      built for RealityScan's OpenGL matrix. Settled by cheirality, 8.9× (§12).
+- [x] `colmap.read_cameras` + `frustum_shape`: the overlay draws the *solved* lens (94.0°
+      at 4:3 here), and answers no fov for a fisheye or equirectangular group rather than
+      guessing one.
+- [x] Preview sources are `sfm` and `train`, found not named; `/preview` answers 400 on
+      anything else. Step 5's mesh stays out until §13.6 is decided.
+- [x] **Looked at in a browser** (P1.7). The sparse cloud draws, and the 300 frustums
+      draw as one arc opening onto the wall they were aimed at — §7.9's cheirality
+      result, seen rather than counted. No console error on the page.
 
-### P1.6 Step 4 — `step_train.py`
+### P1.6 Step 4 — `step_train.py` ✅
 
-- [ ] `spirula train <preset> --data <project>/sfm --image-dir <project>/frames
+- [x] `spirula train <preset> --data <project>/sfm --image-dir <project>/frames
       --output-dir-prefix <project>/train --output-dir-name run --disable-viewer 1`.
-- [ ] **`--output-dir-name` and `--disable-viewer 1` are not optional** (§12,
-      2026-08-27). A missing viewer flag hangs the step forever.
-- [ ] Parse `step N/M (P%) splats S [elapsed E | ETA R] rgb_loss=… ssim=… psnr=…`
-      (§7.7). Map `N/M` onto 5–95 %, cap at 0.99 while running, and accept bare-integer
-      metric values (`psnr=20`, `ssim=0` both occur).
-- [ ] Send `--apply-loss-for-mask 1` whenever `masks/` is non-empty, and do not offer the
-      other position (§12, 2026-08-27).
-- [ ] `reset_steps(project, [4])` after the exe and the dataset are located.
-- [ ] Find the splat under `train/run/step-*.ckpt/splat.ply` — one checkpoint survives a
-      run, but glob and take the highest step rather than assuming it.
-- [ ] `TrainSettings.tsx`: **the panel's defaults follow the selected preset**, read from
-      `docs/spirula/train-help-all-<preset>.txt`'s values now baked into
-      `TrainDefaults` — not a frozen copy of `3dgs`'s (§12, 2026-08-27).
-- [ ] The step-4 viewer shows the splat. 247 MB for a small project, so the decimated
-      preview of §7.9 is load-bearing on day one, not later.
+- [x] **`--output-dir-name` and `--disable-viewer 1` are not optional** (§12,
+      2026-08-27). Both are emitted by the builder, not by the settings.
+- [x] Parse `step N/M (P%) splats S [elapsed E | ETA R] rgb_loss=… ssim=… psnr=…`
+      (§7.7). Mapped onto 5–95 % — measured 0.053 → 0.950 across a 300-step run — and
+      the bare-integer warning was real: step 1 printed `ssim=0  psnr=0` and the last
+      line `psnr=24`, so a `\d+\.\d+` pattern would have lost the first and last point
+      of every chart.
+- [x] **`null` means "the preset decides", in `TrainDefaults` and in the panel.** The
+      preset is the baseline and it moves, so a knob holding a concrete number cannot be
+      told from one the user never touched. Caught by a builder test: `meshing` with
+      `3dgs`'s stored values emitted `--sh-degree 3 --primitive 3dgs --background-mode
+      black` and undid the preset it had just selected (§12, 2026-08-27).
+- [x] Send `--apply-loss-for-mask 1` whenever `masks/` is non-empty, and do not offer the
+      other position. `--mask-dir` takes the **absolute** path of `<project>/masks`,
+      because unlike `sfm auto` the trainer resolves it relative to `--data` — the one
+      unmeasured path in this step, and the log says so (P4).
+- [x] `reset_steps(project, [4])` after the exe and the dataset are located.
+- [x] Find the splat under `train/run/step-*.ckpt/splat.ply` — globbed and ranked by
+      step, not assumed.
+- [x] `TrainSettings.tsx`, with the per-preset default table mirroring
+      `step_train._PRESET_DEFAULTS`; `Step4_Train.tsx` with the input strip, the
+      recharts loss/ssim/psnr chart and the report panel that outlives the scrollback;
+      `GET /api/files/{id}/train`; the `train` section of `AppSetupPanel` (the same
+      component, so the preset table exists twice, not four times).
+- [x] The store's `metric` messages now reach the LiveLog. They carried the *whole* of a
+      training run's output and were being dropped on the floor (§12, 2026-08-27).
+- [x] The step-4 viewer shows the splat: `preview.build(..., 'train')` on the real
+      `splat.ply` gives `kind: splat`, 61 859 × 32 B = 1 979 488 B exactly.
+- [x] **Looked at in a browser** (P1.7). The recharts loss/ssim/psnr chart draws live
+      through a run, and the 716 831-gaussian splat renders sorted and alpha-blended —
+      a basement window, its stone reveal and the grating beside it, recognisably the
+      thing that was filmed. No console error on the page.
 
-### P1.7 The end-to-end run
+### P1.7 The end-to-end run ✅
 
-- [ ] One video → `frames/` → `sfm/sparse/0` → `train/run/step-*.ckpt/splat.ply`,
-      visible in the viewer, with a moving bar at every step.
-- [ ] Abort works at each of them, killing the process **tree** (§2.6).
-- [ ] Record the wall-clock of each step on a real project in the decisions log.
+Run on `zz_abort_test`, a throwaway project sharing the reference rush by hard link so
+the reference project was never a casualty of an abort. **It is still on disk, 1.5 GB —
+delete it from the Projects list when its evidence has been read.**
+
+- [x] One video → `frames/` → `sfm/sparse/0` → `train/run/step-*.ckpt/splat.ply`,
+      visible in the viewer, with a moving bar at every step. Wall clocks in the
+      decisions log (§12, 2026-08-28).
+- [x] Abort works at each of them, killing the process **tree** (§2.6). Step 2 left
+      `ffmpeg` gone and the frame count frozen; step 3 left `sfm/` holding `features/`
+      alone and **no `sfm_result.json`**, which is what makes `colmap.find_model` report
+      nothing to preview rather than hand the parser a stub; step 4 left
+      `train/run/config.json` and no checkpoint. All three reported `aborted`, not
+      `error`.
+- [x] Record the wall-clock of each step on a real project in the decisions log.
+- [x] **Both viewers looked at in a browser** — the standing caveat on P1.5 and P1.6.
+      The sparse cloud draws with its 300 frustums opening onto the wall they were
+      aimed at (§7.9's cheirality, visible rather than counted); the 716 831-gaussian
+      splat renders sorted and alpha-blended. Screenshots driven headed through
+      Playwright, on the workstation's own GPU.
+
+**Three defects the run turned up.** Two are fixed here; the third is JB's call.
+
+- [x] **The LiveLog showed every line twice.** Not a double broadcast — counted on a
+      lone socket, the backend sent each `step N/M` line exactly once — but two live
+      sockets in one page. `useWebSocket.connect` tested only for `OPEN`, and
+      StrictMode's mount→cleanup→mount cycle closes the first socket while it is still
+      `CONNECTING`, so the second mount saw a non-OPEN socket and opened another beside
+      it. Fixed by treating `CONNECTING` as "already have one" and by ignoring an
+      `onclose` from a socket that is no longer the current one. Verified: one live
+      `/ws/logs` socket, where there were two.
+- [x] **The splat count on the step-4 card was the cap, not the file.** The trainer's
+      last bar line is the *live* count and the final prune runs after it: two
+      30 000-iteration runs printed `splats 1000000` and wrote **715 890** and
+      **716 831** — ~28 % fewer. `train_result.json` now carries `splat_count` read off
+      the PLY header, the card shows it, and the cap warning stays keyed on the live
+      number because reaching the cap *during* training is what it is about. The two
+      existing `train_result.json` files predate the field and still show the cap until
+      their project is re-trained.
+- [ ] **The bus has no project id, and the store applies every message to whatever
+      project is open.** Step 4 of the *reference* project displayed the throwaway
+      project's bar at 56 % with a live ETA. `/api/pipeline/start` refuses a second run
+      only *for the same project*, so two projects can run at once even though §1 says
+      one job at a time. Two ways out — carry `project_id` on every message and filter
+      in the store, or refuse a start while any project is running — and it is **JB's
+      call** which.
 
 ---
 
@@ -172,8 +273,23 @@ In the order they block something. See CLAUDE.md §13.
 - [ ] **Does `spirula geometry` resolve images outside the dataset folder?** The one
       thing that could force a junction into the §5 layout. Finish the 419 MB checkpoint
       download and re-run.
+- [ ] **A curation verdict is advisory — JB's call what to do about it.** Step 3 is
+      handed the image *directory* and there is no filtered copy of the frames anywhere
+      (§5.2), so `rejected:blur` reconstructs anyway unless the frame is deleted. Leave
+      it advisory, move rejects to `frames/_rejected/` in step 2, or accept it? Step 3's
+      panel says so on screen meanwhile. See CLAUDE.md §13.2.
+- [ ] **Basename or full filename for a mask?** `masks/frame_0001.png` beside
+      `frames/frame_0001.jpg` is what step 2 writes; COLMAP's own convention is
+      `frame_0001.jpg.png`. Both reference runs had an empty `masks/`, so this has never
+      actually been exercised. One masked run settles it.
 - [ ] **Are `--mask-dir` / `--depth-dir` / `--normal-dir` absolute-path-capable like
-      `--image-dir`?** Assumed by symmetry, not measured. Cheap.
+      `--image-dir`?** Assumed by symmetry, not measured — and since P1.6 this is on the
+      live path, not a future one: step 4 sends `--mask-dir <project>/masks` absolutely,
+      because unlike `sfm auto` the trainer resolves it against `--data` and `masks/` is
+      a sibling of `frames/`, not of `sfm/`. `--depth-dir` and `--normal-dir` are not
+      affected — `sfm/depths` and `sfm/normals` are inside `--data` and keep their
+      relative defaults. One masked run settles it, together with the basename question
+      above.
 - [ ] **Audit the MoGe / Metric3D checkpoint licences** and give them real rows in §10.
 - [ ] Measure a 360 / fisheye capture end to end — `--camera-model equirectangular`,
       `sam mask` on the lens border, `geometry --split auto`, `train 360-camera`. Every

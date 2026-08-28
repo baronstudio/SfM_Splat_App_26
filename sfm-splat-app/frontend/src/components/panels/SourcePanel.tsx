@@ -74,6 +74,24 @@ const ExtractionEstimate: React.FC<{
       ? `${even(p.width)}×${even(p.height)}`
       : null;
 
+  // Zero is not a small number here, it is a failed run: FFmpeg's image2 output
+  // exits non-zero with `Nothing was written into output file` when no frame
+  // reaches it, and the backend now refuses the extraction outright. Say so
+  // where the setting is, not in the error afterwards.
+  if (count < 1) {
+    return (
+      <p className="text-xs text-amber-400 mt-2">
+        ⚠ {workingFps} fps over {p.duration_s.toFixed(1)}s of source is{' '}
+        <span className="font-semibold tabular-nums">less than one frame</span> — the
+        extraction will be refused. Raise the frames per second to at least{' '}
+        <span className="font-semibold tabular-nums">
+          {(1 / p.duration_s).toPrecision(3)}
+        </span>
+        , or switch the fps mode to auto.
+      </p>
+    );
+  }
+
   return (
     <p className="text-xs text-cyan-400/90 mt-2">
       ≈ <span className="font-semibold tabular-nums">{formatCount(count)}</span> frames at{' '}

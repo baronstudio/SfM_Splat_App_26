@@ -23,7 +23,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 
 import numpy as np
 
@@ -443,6 +443,77 @@ def _as_uint8_rgb(rows: np.ndarray, rgb_props: tuple[str, str, str]) -> np.ndarr
             col = col * 255.0 if float(col.max(initial=0.0)) <= 1.0 else col
         channels.append(np.clip(col, 0, 255))
     return np.stack(channels, axis=1).astype(np.uint8)
+
+
+# -- A cloud that never was a PLY --------------------------------------------
+
+def write_cloud(
+    points: Iterable[tuple[float, float, float, int, int, int]],
+    total: int, dst: Path, max_count: Optional[int] = None,
+    progress: Optional[ProgressFn] = None,
+) -> dict:
+    """Write a `PC3D` preview from any (x, y, z, r, g, b) stream.
+
+    Step 3's sparse cloud is not a PLY at all - it is COLMAP's binary
+    `points3D.bin` (CLAUDE.md §7.1), and `core/colmap.iter_points` streams it.
+    The record it goes out as is the same one `_write_cloud` writes, and it is
+    written here rather than there so the format lives in one module.
+
+    Decimation is the same uniform spread the PLY path uses, and for the same
+    reason: a sparse model is stored in the mapper's own order, so the first N
+    points are not a smaller picture of the scene.
+    """
+    keep = selection(total, max_count)
+    keep_set = None if keep is None else set(keep.tolist())
+    planned = total if keep is None else int(keep.size)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".part")
+
+    written = 0
+    buffer: list[tuple[float, float, float, int, int, int]] = []
+
+    with open(tmp, "wb") as out:
+        def flush() -> None:
+            nonlocal written, buffer
+            if not buffer:
+                return
+            table = np.asarray(buffer, dtype=np.float64)
+            out.write(_encode_cloud(
+                table[:, :3].astype(np.float32),
+                np.clip(table[:, 3:6], 0, 255).astype(np.uint8),
+            ))
+            written += len(buffer)
+            buffer = []
+
+        out.write(cloud_header(planned))
+        for index, point in enumerate(points):
+            if keep_set is not None and index not in keep_set:
+                continue
+            buffer.append(point)
+            if len(buffer) >= _CHUNK:
+                flush()
+                if progress:
+                    progress(min(0.99, (index + 1) / max(total, 1)))
+        flush()
+
+        # Same guard as the PLY path: the count is the first thing the viewer
+        # reads, and a source shorter than its own header must not leave it
+        # promising points that are not there.
+        if written != planned:
+            out.seek(len(CLOUD_MAGIC) + 4)
+            out.write(np.array([written], dtype="<u4").tobytes())
+
+    _finalise(tmp, dst)
+    if progress:
+        progress(1.0)
+    return {
+        "kind": KIND_CLOUD,
+        "total": total,
+        "count": written,
+        "record_bytes": CLOUD_RECORD_BYTES,
+        "bytes": dst.stat().st_size,
+        "decimated": written < total,
+    }
 
 
 # -- Already-a-splat passthrough ---------------------------------------------

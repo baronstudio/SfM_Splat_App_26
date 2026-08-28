@@ -19,31 +19,46 @@ from typing import Awaitable, Callable, Iterable, Optional
 PROJECT_SUBDIRS = (
     "input",
     "frames",
+    # One greyscale PNG per frame, written by step 2's alpha extraction or by a
+    # `spirula sam` run. A *sibling* of `frames/` and never inside it, because
+    # that is the layout `sfm auto` and `train` both adopt without being named
+    # (CLAUDE.md §5.2).
     "masks",
     "analysis",
     "report",
-    "rc_output",
-    "lfs_output",
+    # Steps 3, 4 and 5, in the shape the tool decided rather than one we chose:
+    # `sfm/` is the workspace beside the images, `train/` is
+    # `--output-dir-prefix`, `mesh/` is `--output`. The predecessor's
+    # `rc_output/`, `lfs_output/` and `region/` are gone with the two CUDA tools
+    # that needed them (§12, 2026-08-27).
+    "sfm",
+    "train",
+    "mesh",
     "export",
-    # The Reconstruction Region (SESSION 12). Created for every project and
-    # absent from STEP_ARTEFACTS below on purpose: a box the user placed by hand
-    # is *input* to the mask route, not an artefact of the alignment, so a
-    # re-align must not take it. It is the only directory outside `input/` with
-    # that property, which is why it is not inside `rc_output/`.
-    "region",
 )
 
 # What each wizard step leaves on disk, as (directories, individual files).
+# CLAUDE.md §14.1 is the table this implements.
+#
 # Step 1 (import) owns `input/` and is deliberately absent: a reset keeps the
-# source video. `region/` is absent for the same class of reason - see
-# PROJECT_SUBDIRS above. Only `region_auto.rsbox` in it is derived, and step 3
-# overwrites it on every run anyway. Steps 5 and 6 share `export/` — 5 fills it, 6 adds the Blender
-# scene to it, so resetting 5 necessarily invalidates 6 as well.
+# source video.
+#
+# `masks/` goes with step 2, which writes it, and NOT with step 3, which only
+# reads it: they are an input to the reconstruction rather than an output of it,
+# so re-running the alignment must not cost the mask run that fed it.
+#
+# `sfm/depths/` and `sfm/normals/` sit inside `sfm/` and therefore go with a
+# step 3 reset. That is correct — they are per-image maps of the images *this*
+# reconstruction registered — but it means a re-alignment costs the geometry
+# pass too, and `step_sfm` says so by name before it deletes them.
+#
+# Steps 5 and 6 share `export/` — 5 fills it, 6 adds the Blender scene to it —
+# so resetting 5 necessarily invalidates 6 as well.
 STEP_ARTEFACTS: dict[int, tuple[tuple[str, ...], tuple[str, ...]]] = {
     2: (("frames", "masks", "analysis", "report"), ()),
-    3: (("rc_output",), ()),
-    4: (("lfs_output",), ()),
-    5: (("export",), ()),
+    3: (("sfm",), ()),
+    4: (("train",), ()),
+    5: (("mesh", "export"), ()),
     6: ((), ("export/scene.blend", "export/README_SPLATFORGE.txt")),
 }
 

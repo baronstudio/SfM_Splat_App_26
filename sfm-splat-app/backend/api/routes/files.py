@@ -6,9 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from backend.core import cameras, frames as frame_files, preview, sources
+from backend.core import cameras, colmap, frames as frame_files, preview, sources
 from backend.core.config import app_config
-from backend.core import colmap, frames as frame_files
 from backend.core.steps.step_analyze import read_json
 from backend.db.database import get_session
 from backend.models.project import Project
@@ -106,6 +105,45 @@ async def read_sfm_result(project_id: str, session: Session = Depends(get_sessio
     slug = get_slug_from_id(project_id, session)
     report = read_json(PROJECTS_DIR / slug / "sfm" / "sfm_result.json")
     return {"sfm": report}
+
+
+@router.get("/{project_id}/train")
+async def read_train_result(project_id: str, session: Session = Depends(get_session)):
+    """How the last training run went: steps, splat count, the final metrics.
+
+    Written by step 4 to `train/train_result.json`, for the same reason step 3
+    writes `sfm_result.json`: the trainer prints its numbers on a bar line every
+    100 steps and the LiveLog keeps 500 lines, so a 30 000-iteration run's own
+    final psnr is gone from the scrollback long before anybody asks what it was.
+
+    `dataset` comes with it, because the panel has to say what the run will read
+    before it reads it - the same contract step 2's source panel and step 3's
+    input strip keep. `depths` and `normals` are counted inside `sfm/`, which is
+    what `--data` points at, so their presence is what decides whether step 4
+    sends `--load-depths` / `--load-normals` at all (CLAUDE.md §7.5).
+
+    Answers 200 with null before the first run - the caller is a UI panel, not a
+    dependency.
+    """
+    slug = get_slug_from_id(project_id, session)
+    project_path = PROJECTS_DIR / slug
+    report = read_json(project_path / "train" / "train_result.json")
+
+    sfm_dir = project_path / "sfm"
+
+    def _count(name: str) -> int:
+        target = sfm_dir / name
+        return sum(1 for p in target.iterdir() if p.is_file()) if target.is_dir() else 0
+
+    return {
+        "train": report,
+        "dataset": {
+            "has_model": colmap.find_model(sfm_dir) is not None,
+            "images": frame_files.count_frames(project_path / "frames"),
+            "depths": _count("depths"),
+            "normals": _count("normals"),
+        },
+    }
 
 
 @router.get("/{project_id}/masks")
@@ -282,11 +320,11 @@ async def list_export_files(project_id: str, session: Session = Depends(get_sess
 # ── 3D viewer ────────────────────────────────────────────────────────────────
 
 def _preview_query(source: str, max_count: int) -> tuple[str, Optional[int]]:
-    if source not in preview.SOURCE_DIRS:
+    if source not in preview.SOURCES:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown source '{source}'. Expected one of "
-                   f"{', '.join(preview.SOURCE_DIRS)}.",
+                   f"{', '.join(preview.SOURCES)}.",
         )
     # 0 means "the whole file" — the viewer's "full quality" level.
     return source, (None if max_count <= 0 else max_count)
@@ -295,7 +333,7 @@ def _preview_query(source: str, max_count: int) -> tuple[str, Optional[int]]:
 @router.get("/{project_id}/preview")
 async def preview_status(
     project_id: str,
-    source: str = "rc",
+    source: str = "sfm",
     max_count: int = 1_000_000,
     session: Session = Depends(get_session),
 ):
@@ -321,7 +359,7 @@ async def preview_status(
 @router.post("/{project_id}/preview")
 async def preview_build(
     project_id: str,
-    source: str = "rc",
+    source: str = "sfm",
     max_count: int = 1_000_000,
     session: Session = Depends(get_session),
 ):

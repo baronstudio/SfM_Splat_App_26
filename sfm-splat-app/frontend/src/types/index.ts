@@ -40,12 +40,16 @@ export interface ProjectOperation {
  *  never reset — that is the whole point of the option. */
 export const RESETTABLE_STEPS = [2, 3, 4, 5, 6] as const;
 
-// 'curate' is the second phase of wizard step 2, not a seventh step: it gets
-// its own name so the UI can show its progress separately (CLAUDE.md §6).
-// 'masks' is the same shape one step later: a second RealityScan run over the
-// saved alignment, reporting into wizard step 3 (TODO P4).
+// More names than there are wizard steps, because three of them are phases
+// reporting into a step rather than steps of their own (CLAUDE.md §6, §7.4,
+// §7.5): 'curate' is step 2's second phase, 'masks' is the `spirula sam` run
+// that attaches to step 3, and 'geometry' is the `spirula geometry` run that
+// attaches to step 4. Each is separately re-runnable — the expensive phase must
+// never be redone to change a threshold — which is exactly why it needs its own
+// progress name.
 export type StepName =
-  | 'extract' | 'curate' | 'rc' | 'masks' | 'lfs' | 'export' | 'blender';
+  | 'extract' | 'curate' | 'sfm' | 'masks'
+  | 'geometry' | 'train' | 'mesh' | 'export' | 'scene';
 export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'aborted';
 export type LogLevel = 'INFO' | 'WARNING' | 'ERROR' | 'SUCCESS' | 'DEBUG';
 
@@ -62,9 +66,13 @@ export interface WsMessage {
     total_iterations?: number;
     loss?: number;
     psnr?: number;
+    /** `spirula train` reports structural similarity on every bar line. */
+    ssim?: number;
     num_gaussians?: number;
     iter_per_sec?: number;
     elapsed_s?: number;
+    /** Derived from the real step rate, and sensible from step 1 (§7.7). */
+    eta_s?: number;
   };
   file?: string;
 }
@@ -77,13 +85,16 @@ export interface LogEntry {
   message: string;
 }
 
-// Partial on purpose: LichtFeld Studio v0.5.3 prints the loss and the gaussian
-// count on its training bar and PSNR only on the evaluation line an `--eval` run
-// produces, so a point rarely holds all four (store/pipelineStore.ts).
-export interface LfsMetric {
+// One point of the training chart, folded from the bar line `spirula train`
+// prints every hundred steps (CLAUDE.md §7.7). Every field is optional because
+// a build may drop one, never because zero is missing: `ssim=0` and `psnr=20`
+// both occur, and a pattern that required a decimal point would lose exactly
+// the lines a run starts and ends on.
+export interface TrainMetric {
   iteration: number;
   loss?: number;
   psnr?: number;
+  ssim?: number;
   num_gaussians?: number;
 }
 
@@ -350,12 +361,149 @@ export interface ViewerDefaults {
   background: string;
 }
 
+// ── Step 3 — `spirula sfm auto` (CLAUDE.md §7.1) ─────────────────────────────
+
+/** The lens models `--camera-model` takes. The last three are why 360 capture
+ *  needs no undistortion pass anywhere in this pipeline (§1). */
+export type SfmCameraModel =
+  | 'simple-pinhole' | 'pinhole' | 'radial' | 'opencv' | 'full-opencv'
+  | 'opencv-fisheye' | 'thin-prism-fisheye' | 'equirectangular';
+
+export interface SfmDefaults {
+  quality: 'low' | 'medium' | 'high' | 'extreme';
+  data_type: 'individual' | 'video' | 'internet';
+  pairs: 'auto' | 'exhaustive' | 'sequential' | 'prefilter';
+  camera_model: SfmCameraModel;
+  camera_mode: 'single' | 'folder' | 'image';
+  /** 0 lets the frontend pick: 3200 for sift, 1600 for aliked. */
+  max_image_size: number;
+  max_features: number;
+  /** Off sends `--no-masks`. Adoption of a `masks/` sibling is automatic. */
+  use_masks: boolean;
+  progress_dir: boolean;
+}
+
+/** `sfm/sfm_result.json` — the verdict that outlives the scrollback (§7.1). */
+export interface SfmResult {
+  exit_code: number;
+  exit_meaning: string;
+  spirula_version: string;
+  images: number;
+  sparse_models: number;
+  masks_used: boolean;
+  mask_count: number;
+  quality: string;
+  data_type: string;
+  camera_model: string;
+  command: string[];
+  finished_at: string;
+  registered?: number;
+  total?: number;
+  reprojection_mean_px?: number;
+  reprojection_median_px?: number;
+  observations?: number;
+  points?: number;
+  /** Camera *groups* — two intrinsics from one folder, not two components. */
+  camera_groups?: number;
+  elapsed_s?: number;
+}
+
+// ── Step 4 — `spirula train` (CLAUDE.md §7.6) ────────────────────────────────
+
+export type TrainPreset =
+  | '3dgs' | '360-camera' | 'in-the-wild' | 'linear-color' | 'synthetic'
+  | 'meshing' | 'academic-baseline';
+
+/**
+ * Step 4's knobs, and `null` is the important value here.
+ *
+ * The preset is the first positional argument of `spirula train` and it moves
+ * the defaults of everything under it — `meshing` alone sets `--primitive
+ * 3dgut`, `--sh-degree 0` and `--background-mode noise`. Naming a flag
+ * overrides the preset, so a knob holding a concrete number could not be told
+ * from a knob the user never touched, and switching preset would send the old
+ * one's whole block back and undo the new one. `null` means "the preset
+ * decides" and nothing goes on the command line; `TRAIN_PRESET_DEFAULTS` (in
+ * `TrainSettings.tsx`) is what the panel shows in its place, mirroring
+ * `_PRESET_DEFAULTS` in `step_train.py`.
+ *
+ * The `load_*` switches are the exception: they are intent ("use the masks if
+ * there are any"), resolved by the run against what is on disk.
+ */
+export interface TrainDefaults {
+  preset: TrainPreset;
+  num_iterations: number | null;
+  quality: 'low' | 'medium' | 'high' | 'ultra' | null;
+  cap_max: number | null;
+  sh_degree: number | null;
+  primitive: '3dgs' | 'mip' | '3dgut' | null;
+  background_mode: 'black' | 'noise' | 'sh' | null;
+  steps_per_save: number | null;
+  save_only_latest_checkpoint: boolean | null;
+  save_eval_images: boolean | null;
+  distraction_robustness: 'off' | 'mild' | 'strong' | null;
+  floater_suppression: 'off' | 'mild' | 'strong' | null;
+  load_masks: boolean;
+  /** Always 1 under the masked route — 0 means *ignore*, which measured as no
+   *  masks at all (§7.6). No switch is offered for it. */
+  apply_loss_for_mask: boolean;
+  mask_boundary_offset: number | null;
+  load_depths: boolean;
+  load_normals: boolean;
+  depth_supervision_weight: number | null;
+  normal_supervision_weight: number | null;
+  orientation_method: 'pca' | 'up' | 'vertical' | 'none' | 'gsplat' | null;
+  center_method: 'poses' | 'focus' | 'none' | 'gsplat' | null;
+  auto_scale_poses: boolean | null;
+  train_frame: 'normalized' | 'camera' | 'points' | null;
+}
+
+/** `train/train_result.json` — the run's numbers, kept past the scrollback. */
+export interface TrainResult {
+  exit_code: number;
+  spirula_version: string;
+  preset: TrainPreset;
+  images: number;
+  iterations_requested: number;
+  quality: string;
+  cap_max: number;
+  primitive: string;
+  sh_degree: number;
+  masks_used: boolean;
+  mask_count: number;
+  apply_loss_for_mask: boolean;
+  depths_used: boolean;
+  normals_used: boolean;
+  /** Relative to the project directory. Null only on a run that wrote nothing. */
+  splat_path: string | null;
+  splat_bytes: number | null;
+  /**
+   * Gaussians in the written PLY, from its header — not the same number as
+   * `num_gaussians`, which is the live count on the last bar line and is taken
+   * before the final prune. Two 30 000-iteration runs printed the 1 000 000 cap
+   * and wrote 715 890 and 716 831.
+   */
+  splat_count?: number | null;
+  command: string[];
+  finished_at: string;
+  /** From the closing `Training complete. Steps: N   Time: M:SS` line. */
+  steps?: number;
+  elapsed_s?: number;
+  /** From the last bar line the run printed. */
+  iteration?: number;
+  total_iterations?: number;
+  num_gaussians?: number;
+  loss?: number;
+  ssim?: number;
+  psnr?: number;
+}
+
 export interface AppDefaults {
   schema_version: number;
   extract: ExtractDefaults;
   curate: CurateDefaults;
-  rc: RCDefaults;
-  lfs: LFSDefaults;
+  sfm: SfmDefaults;
+  train: TrainDefaults;
   export: ExportDefaults;
   blender: BlenderDefaults;
   viewer: ViewerDefaults;
@@ -563,7 +711,14 @@ export interface ImageSetManifest {
 
 // -- 3D viewer (wizard steps 3, 4 and 5) -------------------------------------
 
-export type PreviewSource = 'rc' | 'lfs' | 'export';
+/**
+ * What the viewer can ask for. `sfm` is step 3's sparse model (COLMAP binary,
+ * not a PLY), `train` is the trained splat of the highest checkpoint. Step 5's
+ * mesh is deliberately absent — a textured glb is neither a point cloud nor a
+ * splat, and whether it gets a third renderer or a thumbnail is still open
+ * (CLAUDE.md §13.6).
+ */
+export type PreviewSource = 'sfm' | 'train';
 
 /** What the source file turned out to be, not which step wrote it: a step may
  *  produce a plain sparse cloud or a gaussian PLY, and the renderer follows the
@@ -594,12 +749,15 @@ export interface PreviewState {
 }
 
 export interface CameraPose {
-  /** Name in the RC export — renamed to 00000.png when RC undistorted it. */
+  /** The input filename — `images.bin` keeps it, and nothing renames frames. */
   name: string;
   position: number[];
-  /** Row-major 3x3 rotation of the camera-to-world matrix. */
+  /**
+   * Row-major 3x3 world-from-camera rotation. COLMAP-framed, so the camera
+   * looks down +Z and `basis · (0, 0, 1)` is the viewing direction.
+   */
   basis: number[];
-  /** The input frame this camera came from, when the two could be matched. */
+  /** The input frame this camera came from. Always `name` now. */
   source_name: string | null;
   sequence_id: number | null;
   /** An aligned camera whose neighbour in the input order never came back. */
@@ -613,7 +771,15 @@ export interface CamerasReport {
   matched_by?: 'name' | 'position' | 'count' | null;
   gaps_known?: boolean;
   missing_count?: number;
+  input_count?: number;
   sequence_ids?: number[];
+  /**
+   * Horizontal field of view in radians, off `cameras.bin`. Null for the lens
+   * models no single angle describes — a fisheye or an equirectangular camera
+   * (CLAUDE.md §7.1) — where the overlay draws its own frustum shape instead.
+   */
   fov_x?: number | null;
   aspect?: number | null;
+  /** `sparse/N` count. More than one is a fragmented capture. */
+  models?: number;
 }

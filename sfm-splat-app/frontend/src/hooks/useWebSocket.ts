@@ -17,7 +17,21 @@ export const useWebSocket = () => {
   const mountedRef = useRef(false);
 
   const connect = () => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // CONNECTING counts as "already have one". Testing only for OPEN left a
+    // window one tick wide that StrictMode walks straight into: mount opens
+    // ws1, the cleanup closes it while it is still CONNECTING, and the second
+    // mount sees a non-OPEN socket and opens ws2 beside it — two live sockets,
+    // so every line the bus sent arrived in the LiveLog twice. Measured on a
+    // training run: the backend broadcast each `step N/M` line exactly once
+    // (counted on a lone socket) while the page showed each of them twice.
+    const existing = wsRef.current;
+    if (
+      existing
+      && (existing.readyState === WebSocket.OPEN
+        || existing.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
 
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
@@ -64,6 +78,12 @@ export const useWebSocket = () => {
     };
 
     ws.onclose = () => {
+      // Only the socket that is still the current one gets to report its own
+      // loss and ask for a reconnect. A socket already replaced by a later
+      // connect() is history, and letting it run this handler would clear the
+      // live `wsRef` and schedule a second connection on top of it.
+      if (wsRef.current !== ws) return;
+
       setConnected(false);
       usePipelineStore.getState().setWsConnected(false);
       usePipelineStore.getState().addLog({

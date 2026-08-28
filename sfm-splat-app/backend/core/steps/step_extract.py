@@ -165,6 +165,47 @@ def build_extract_filter_args(
     return args + [frames_pattern, "-map", "[sout]", "-f", "null", "-"]
 
 
+def check_fps_yields_frames(fps: float, duration_s: float | None) -> None:
+    """Refuse a working fps that cannot put one frame through the mjpeg encoder.
+
+    An fps low enough that its first sample falls past the end of the source
+    does not extract zero frames quietly — FFmpeg's image2 output *fails*:
+
+        [vost#0:0/mjpeg] Task finished with error code: -22 (Invalid argument)
+        [out#0/image2] Nothing was written into output file, because at least
+                       one of its streams received no packets.
+
+    and exits non-zero, so the step dies with an `-22 Invalid argument` tail
+    that says nothing about the setting that caused it. Measured 2026-08-28 on
+    a 3840x2880 h264 source: `fps=0.02` over 20 s of it wrote nothing and
+    exited non-zero, the same filter over 60 s wrote one frame and exited 0 —
+    the `fps` filter samples at the centre of each period, so the run needs
+    roughly `duration >= 1 / (2 * fps)`. The real case was `fps_absolute` left
+    at 0.001 against a 139 s rush: one frame every 1000 s, none inside the file.
+
+    Raises ValueError naming the fps that would work. Unknown duration means no
+    denominator and therefore no check.
+    """
+    if fps <= 0:
+        raise ValueError(
+            f"Working fps resolved to {fps:g} — FFmpeg cannot extract frames at "
+            "that rate. Fix the fps settings in step 2."
+        )
+    if not duration_s or duration_s <= 0:
+        return
+    expected = fps * duration_s
+    if expected >= 1.0:
+        return
+    raise ValueError(
+        f"{fps:g} fps over {duration_s:.1f}s of source is {expected:.3g} frames — "
+        "FFmpeg would fail with 'Nothing was written into output file' rather "
+        "than write none, so the extraction is refused before it runs and the "
+        "previous frames are left alone.\n"
+        f"Raise the frames per second to at least {1.0 / duration_s:.3g} (one frame) "
+        "or switch the fps mode to auto."
+    )
+
+
 def build_scale_filter(scale_percent: int) -> str | None:
     """The FFmpeg `scale` clause for a percentage of the source resolution.
 
@@ -424,22 +465,39 @@ async def run_extract(project_path: Path, broadcast_fn, settings: dict) -> dict:
     # configured and none on PATH - so a misconfigured tool path deleted the
     # frames it was then unable to re-extract. Steps 3 and 4 clear after their
     # exe check for the same reason.
+    loop = asyncio.get_running_loop()
+
+    # Probed *before* the reset, and the fps checked before it too: the `auto`
+    # mode needs the real duration and cadence, and check_fps_yields_frames
+    # refuses a setting that cannot produce a single frame. Deleting the
+    # previous run and only then discovering the settings are unusable is the
+    # same trap the tool path fell into above — locate the input, validate,
+    # delete last (§14.1). A probe failure is not fatal: the resolver falls
+    # back to the ratio mode.
+    probe: dict = {}
+    probe_error: Exception | None = None
+    try:
+        probe = await loop.run_in_executor(None, probe_video, input_video, ffmpeg_path)
+    except Exception as e:  # noqa: BLE001 — degraded mode is intended
+        probe_error = e
+
+    fps, explanation = resolve_extract_fps(
+        extract, probe.get("fps"), probe.get("duration_s")
+    )
+    check_fps_yields_frames(fps, probe.get("duration_s"))
+
     await _clear_previous_run(project_path, broadcast_fn)
 
     frames_dir = project_path / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
-    # Hoisted out of the probe block below: it is also FFmpeg's working
+    # Hoisted out of the probe block above: it is also FFmpeg's working
     # directory, and where the scdet branch writes its scores.
     analysis_dir_path = project_path / "analysis"
     analysis_dir_path.mkdir(parents=True, exist_ok=True)
 
-    loop = asyncio.get_running_loop()
-
-    # Probe first: the `auto` fps mode needs the real duration and cadence.
-    # A probe failure is not fatal — the resolver falls back to the ratio mode.
-    probe: dict = {}
-    try:
-        probe = await loop.run_in_executor(None, probe_video, input_video, ffmpeg_path)
+    if probe_error is not None:
+        await broadcast_fn("extract", "WARNING", f"[ffprobe] unavailable: {probe_error}")
+    else:
         (analysis_dir_path / "probe.json").write_text(
             json.dumps(probe, indent=2), encoding="utf-8"
         )
@@ -448,12 +506,7 @@ async def run_extract(project_path: Path, broadcast_fn, settings: dict) -> dict:
             f"[ffprobe] {probe.get('codec')} {probe.get('width')}x{probe.get('height')} "
             f"@ {probe.get('fps')} fps, {probe.get('duration_s')}s",
         )
-    except Exception as e:  # noqa: BLE001 — degraded mode is intended
-        await broadcast_fn("extract", "WARNING", f"[ffprobe] unavailable: {e}")
 
-    fps, explanation = resolve_extract_fps(
-        extract, probe.get("fps"), probe.get("duration_s")
-    )
     await broadcast_fn("extract", "INFO", f"[fps] {explanation}")
 
     vf_filter = f"fps={fps}"
@@ -577,8 +630,21 @@ async def run_extract(project_path: Path, broadcast_fn, settings: dict) -> dict:
             if not match:
                 ffmpeg_output_lines.append(line)
                 if _HWACCEL_FAILED.search(line):
+                    first = not hwaccel_fell_back
                     hwaccel_fell_back = True
                     await broadcast_fn("extract", "WARNING", line)
+                    if first:
+                        # Said here rather than only at the end of the run: a
+                        # step that fails for an unrelated reason ends without
+                        # ever reaching the post-run note, and this red line is
+                        # then the last thing in the log and reads as the cause.
+                        await broadcast_fn(
+                            "extract", "WARNING",
+                            f"[FFmpeg] -hwaccel {hwaccel} was refused for this source "
+                            "and FFmpeg is decoding in software instead. The frames "
+                            "will be correct — this is not a failure, only the ~5x "
+                            "speed-up lost (§6.1).",
+                        )
                 else:
                     await broadcast_fn("extract", "INFO", line)
                 continue
@@ -616,14 +682,6 @@ async def run_extract(project_path: Path, broadcast_fn, settings: dict) -> dict:
         tail = "\n".join(ffmpeg_output_lines[-20:]) if ffmpeg_output_lines else "(no output)"
         raise RuntimeError(
             f"FFmpeg exited with code {returncode}.\nLast output:\n{tail}"
-        )
-
-    if hwaccel_fell_back:
-        await broadcast_fn(
-            "extract", "WARNING",
-            f"[FFmpeg] -hwaccel {hwaccel} was refused for this source and FFmpeg "
-            "decoded in software instead. The frames are correct; the run was "
-            "just as slow as with hardware decoding off.",
         )
 
     actual_frames = frame_files.count_frames(frames_dir)

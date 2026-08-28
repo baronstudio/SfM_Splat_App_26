@@ -258,9 +258,25 @@ class TrainDefaults(BaseModel):
     """Step 4 — `spirula train` (CLAUDE.md §7.6).
 
     Read off `docs/spirula/train-help-all-*.txt`, one capture per preset, and
-    only flags that build actually has. The preset is the first positional
-    argument and it moves the defaults of everything under it, so the panel
-    shows the selected preset's values rather than a frozen copy of `3dgs`'s.
+    only flags that build actually has.
+
+    **`None` means "the preset decides", and every tool knob here defaults to
+    it.** The preset is the first positional argument and it moves the defaults
+    of everything under it — `meshing` alone sets `--primitive 3dgut`,
+    `--sh-degree 0` and `--background-mode noise` — so a model holding concrete
+    numbers could not tell "the user asked for 3" from "3 is what `3dgs`
+    happened to default to", and switching the preset would send the previous
+    one's whole block back on the command line and silently undo the new one.
+    Naming a flag overrides the preset, which is the same rule `SfmDefaults`
+    follows against the build's own defaults (§12, 2026-08-27); here the
+    baseline is per-preset rather than global, so it cannot be a literal in this
+    file. `step_train.preset_defaults()` is that table, and it is what the panel
+    shows for an unset knob.
+
+    The four `load_*` / `apply_*` switches are the exception: they are the
+    user's *intent* ("use the masks if there are any"), not a value handed
+    straight to the tool, and the run resolves each of them against what is
+    actually on disk before deciding whether a flag is needed at all.
     """
     # `train --help` lists six presets; `academic-baseline` is a seventh that
     # works and is not listed — measured 2026-08-27, see
@@ -269,20 +285,25 @@ class TrainDefaults(BaseModel):
         "3dgs", "360-camera", "in-the-wild", "linear-color", "synthetic",
         "meshing", "academic-baseline",
     ] = "3dgs"
-    num_iterations: int = 30000
-    quality: Literal["low", "medium", "high", "ultra"] = "medium"
-    cap_max: int = 1_000_000
-    sh_degree: int = 3
-    primitive: Literal["3dgs", "mip", "3dgut"] = "3dgs"
-    background_mode: Literal["black", "noise", "sh"] = "black"
-    steps_per_save: int = 2000
+
+    # -- run length, splat budget and model shape --
+    num_iterations: Optional[int] = None
+    quality: Optional[Literal["low", "medium", "high", "ultra"]] = None
+    cap_max: Optional[int] = None
+    sh_degree: Optional[int] = None
+    primitive: Optional[Literal["3dgs", "mip", "3dgut"]] = None
+    background_mode: Optional[Literal["black", "noise", "sh"]] = None
+    steps_per_save: Optional[int] = None
     # The build keeps only the newest checkpoint, so exactly one survives a run.
-    save_only_latest_checkpoint: bool = True
-    save_eval_images: bool = False
-    distraction_robustness: Literal["off", "mild", "strong"] = "off"
-    floater_suppression: Literal["off", "mild", "strong"] = "off"
+    save_only_latest_checkpoint: Optional[bool] = None
+    save_eval_images: Optional[bool] = None
+    distraction_robustness: Optional[Literal["off", "mild", "strong"]] = None
+    floater_suppression: Optional[Literal["off", "mild", "strong"]] = None
 
     # -- masks --
+    # Intent, not a flag: the run sends `--load-masks 0` when this is off or
+    # `masks/` is empty, and points `--mask-dir` at the absolute path otherwise.
+    load_masks: bool = True
     # The trainer's own default for apply_loss_for_mask is 0, and 0 means
     # *ignore*: its help reads "Off ignores them... On trains them as empty,
     # which removes the background and leaves just the subject." That is the
@@ -291,24 +312,29 @@ class TrainDefaults(BaseModel):
     # inside the region box against 79.3 % unmasked, p99 radius 147.0 against
     # 149.6 — and `segment` was the whole effect, 96.3 % and a p99 radius of
     # 19.5. So the masked route sends 1, and the off position is not offered
-    # under it.
-    load_masks: bool = True
+    # under it: this ships True and the UI has no switch for it.
     apply_loss_for_mask: bool = True
     # Signed: grows or shrinks the masks by this fraction of the image size.
-    # No LichtFeld Studio equivalent.
-    mask_boundary_offset: float = 0.0
+    # No LichtFeld Studio equivalent. `360-camera` and `in-the-wild` preset it
+    # to -0.025, which is exactly why it is None here rather than 0.0.
+    mask_boundary_offset: Optional[float] = None
 
     # -- geometry supervision, fed by GeometryDefaults --
+    # Intent again: the run sends 0 when `sfm/depths` or `sfm/normals` is empty,
+    # and otherwise lets `--depth-dir` / `--normal-dir` keep their relative
+    # defaults, which resolve inside `--data` at no flag cost (§7.5).
     load_depths: bool = True
     load_normals: bool = True
-    depth_supervision_weight: float = 0.0
-    normal_supervision_weight: float = 0.01
+    depth_supervision_weight: Optional[float] = None
+    normal_supervision_weight: Optional[float] = None
 
     # -- scene placement --
-    orientation_method: Literal["pca", "up", "vertical", "none", "gsplat"] = "up"
-    center_method: Literal["poses", "focus", "none", "gsplat"] = "poses"
-    auto_scale_poses: bool = True
-    train_frame: Literal["normalized", "camera", "points"] = "points"
+    orientation_method: Optional[
+        Literal["pca", "up", "vertical", "none", "gsplat"]
+    ] = None
+    center_method: Optional[Literal["poses", "focus", "none", "gsplat"]] = None
+    auto_scale_poses: Optional[bool] = None
+    train_frame: Optional[Literal["normalized", "camera", "points"]] = None
 
 
 class MeshDefaults(BaseModel):

@@ -5,7 +5,7 @@ import type {
   WsMessage,
   LogEntry,
   StepStatus,
-  LfsMetric,
+  TrainMetric,
   ExportFile,
   StepName,
   LogLevel,
@@ -33,8 +33,8 @@ interface PipelineState {
   // Per-step progress
   stepProgress: Record<string, number>;
 
-  // LFS metrics
-  lfsMetrics: LfsMetric[];
+  // Training metrics — the `step N/M … splats S … psnr=P` bar line (§7.7)
+  trainMetrics: TrainMetric[];
 
   // Export files
   exportFiles: ExportFile[];
@@ -68,9 +68,9 @@ interface PipelineState {
   setPipelineRunning: (running: boolean) => void;
   confirmStep: (step: number) => void;
 
-  // Actions — LFS metrics
-  addLfsMetric: (metric: LfsMetric) => void;
-  clearLfsMetrics: () => void;
+  // Actions — training metrics
+  addTrainMetric: (metric: TrainMetric) => void;
+  clearTrainMetrics: () => void;
 
   // Actions — export files
   setExportFiles: (files: ExportFile[]) => void;
@@ -87,20 +87,25 @@ const stepNameToIndex: Record<StepName, number> = {
   extract: 2,
   // Curation is step 2's second phase, so it reports against the same step.
   curate: 2,
-  rc: 3,
-  // The mask run is step 3's second RealityScan process, the same shape as
-  // `curate` being step 2's second phase (TODO P4).
+  sfm: 3,
+  // The `spirula sam` run attaches to step 3 and the `spirula geometry` run to
+  // step 4, the same shape as `curate` being step 2's second phase: both are
+  // separately re-runnable so a threshold change never costs the expensive
+  // phase (CLAUDE.md §7.4, §7.5).
   masks: 3,
-  lfs: 4,
+  geometry: 4,
+  train: 4,
+  // Step 5 meshes and then fills export/ — the two share a directory (§14.1).
+  mesh: 5,
   export: 5,
-  blender: 6,
+  scene: 6,
 };
 
-// The training chart is fed by whatever LichtFeld Studio prints, which is a bar
-// redrawn every hundred iterations — a 30 000-iteration run is 300 points, but
-// a build that redraws more often must not be able to hand recharts tens of
-// thousands. Over the cap the series is halved, which keeps the whole range at
-// half the resolution instead of dropping its head or its tail.
+// The training chart is fed by the trainer's own bar line, one every hundred
+// steps — a 30 000-iteration run is 300 points, but a build that prints more
+// often must not be able to hand recharts tens of thousands. Over the cap the
+// series is halved, which keeps the whole range at half the resolution instead
+// of dropping its head or its tail.
 const MAX_METRIC_POINTS = 800;
 
 let logCounter = 0;
@@ -138,18 +143,18 @@ function applyProgress(state: PipelineState, msg: WsMessage): void {
   );
 }
 
-/** Fold one parsed LichtFeld Studio line into the training series.
+/** Fold one training bar line into the chart series.
  *
- * Partial by design. v0.5.3 spreads the numbers over two different lines —
- * `Training […] 100/300 | Loss: 0.1391 | Splats: 281029` carries the iteration,
- * the loss and the gaussian count, while PSNR appears only on the
- * `[Evaluation at step N] PSNR: …` line an `--eval` run prints. Requiring all
- * four at once, as this did, meant no point ever qualified and the chart stayed
- * empty for every run. So a message contributes what it has: same iteration as
- * the last point merges into it, a new one appends, and a field nobody reported
- * stays undefined rather than being invented — recharts draws no line for a
- * series that is never present, which is the honest picture of a run with no
- * evaluation.
+ * `spirula train` prints every number on one line every 100 steps (§7.7):
+ *
+ *   step 1101/3000 ( 36%) splats 58963 [elapsed 0:17 | ETA 0:26] rgb_loss=… ssim=… psnr=…
+ *
+ * so unlike LichtFeld Studio — which spread the iteration, the loss and PSNR
+ * over two different lines, and made a chart that required all of them at once
+ * stay empty for every run — a point here is normally complete. It is still
+ * folded field by field rather than required whole: `ssim=0` and `psnr=20` both
+ * occur, so a field is "missing" only when it is genuinely absent, never when
+ * it is zero.
  */
 function applyMetric(state: PipelineState, data: NonNullable<WsMessage['data']>): void {
   const num = (v: number | undefined) =>
@@ -157,22 +162,25 @@ function applyMetric(state: PipelineState, data: NonNullable<WsMessage['data']>)
 
   const loss = num(data.loss);
   const psnr = num(data.psnr);
+  const ssim = num(data.ssim);
   const numGaussians = num(data.num_gaussians);
-  if (loss === undefined && psnr === undefined && numGaussians === undefined) return;
+  if (loss === undefined && psnr === undefined
+      && ssim === undefined && numGaussians === undefined) return;
 
-  const last = state.lfsMetrics[state.lfsMetrics.length - 1];
+  const last = state.trainMetrics[state.trainMetrics.length - 1];
   const iteration = num(data.iteration) ?? last?.iteration ?? 0;
 
   if (last && last.iteration === iteration) {
     if (loss !== undefined) last.loss = loss;
     if (psnr !== undefined) last.psnr = psnr;
+    if (ssim !== undefined) last.ssim = ssim;
     if (numGaussians !== undefined) last.num_gaussians = numGaussians;
     return;
   }
 
-  state.lfsMetrics.push({ iteration, loss, psnr, num_gaussians: numGaussians });
-  if (state.lfsMetrics.length > MAX_METRIC_POINTS) {
-    state.lfsMetrics = state.lfsMetrics.filter((_, i) => i % 2 === 0);
+  state.trainMetrics.push({ iteration, loss, psnr, ssim, num_gaussians: numGaussians });
+  if (state.trainMetrics.length > MAX_METRIC_POINTS) {
+    state.trainMetrics = state.trainMetrics.filter((_, i) => i % 2 === 0);
   }
 }
 
@@ -189,7 +197,7 @@ export const usePipelineStore = create<PipelineState>()(
     wsConnected: false,
     logs: [],
     stepProgress: {},
-    lfsMetrics: [],
+    trainMetrics: [],
     exportFiles: [],
     projectOp: null,
 
@@ -271,12 +279,12 @@ export const usePipelineStore = create<PipelineState>()(
     confirmStep: (step) =>
       set((state) => { state.stepStatuses[step] = 'done'; }),
 
-    // LFS metrics actions
-    addLfsMetric: (metric) =>
-      set((state) => { state.lfsMetrics.push(metric); }),
+    // Training metric actions
+    addTrainMetric: (metric) =>
+      set((state) => { state.trainMetrics.push(metric); }),
 
-    clearLfsMetrics: () =>
-      set((state) => { state.lfsMetrics = []; }),
+    clearTrainMetrics: () =>
+      set((state) => { state.trainMetrics = []; }),
 
     // Export file actions
     setExportFiles: (files) =>
@@ -332,7 +340,7 @@ export const usePipelineStore = create<PipelineState>()(
       set((state) => {
         // Progress is read before the switch, whatever the message was typed
         // as. A message legitimately carries a metric *and* a progress value —
-        // LichtFeld Studio sends both on every training-bar line — and
+        // `spirula train` puts both on every one of its bar lines (§7.7) — and
         // `websocket.py` picks the type by priority, testing `data` before
         // `progress`, so those arrive as `metric` and the bar never moved.
         // Fixing it here rather than reordering the priority: the type says
@@ -340,24 +348,32 @@ export const usePipelineStore = create<PipelineState>()(
         // number that is present gets used.
         if (msg.progress !== undefined) applyProgress(state, msg);
 
-        switch (msg.type) {
-          case 'log': {
-            if (msg.step === 'project' && state.projectOp && msg.message) {
-              state.projectOp.message = msg.message;
-            }
-            const entry: LogEntry = {
-              id: `log-${++logCounter}`,
-              timestamp: msg.timestamp,
-              step: msg.step,
-              level: (msg.level as LogLevel) ?? 'INFO',
-              message: msg.message ?? '',
-            };
-            state.logs.push(entry);
-            if (state.logs.length > MAX_LOGS) {
-              state.logs = state.logs.slice(state.logs.length - MAX_LOGS);
-            }
-            break;
+        // Same argument, one field further: a message's type does not decide
+        // whether its *text* is worth showing either. `metric` was silently
+        // dropping every line it carried, which for step 4 is the whole run —
+        // the trainer says nothing else between loading the dataset and
+        // finishing — and for step 3 it swallowed the one SUCCESS line naming
+        // the registered count. Anything with a message is a log line.
+        if (msg.message && (msg.type === 'log' || msg.type === 'metric')) {
+          if (msg.step === 'project' && state.projectOp) {
+            state.projectOp.message = msg.message;
           }
+          state.logs.push({
+            id: `log-${++logCounter}`,
+            timestamp: msg.timestamp,
+            step: msg.step,
+            level: (msg.level as LogLevel) ?? 'INFO',
+            message: msg.message,
+          });
+          if (state.logs.length > MAX_LOGS) {
+            state.logs = state.logs.slice(state.logs.length - MAX_LOGS);
+          }
+        }
+
+        switch (msg.type) {
+          case 'log':
+            // Already logged above, alongside the metric lines that carry text.
+            break;
           case 'progress':
             // Already applied above, for every message type at once.
             break;

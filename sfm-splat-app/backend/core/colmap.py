@@ -15,6 +15,7 @@ The formats are COLMAP's own, and the parsers below were written against a real
 
 from __future__ import annotations
 
+import math
 import struct
 from pathlib import Path
 from typing import BinaryIO, Iterator, NamedTuple, Optional
@@ -27,6 +28,45 @@ import numpy as np
 RECON_DIR_CANDIDATES = ("sparse/0", "colmap/sparse/0", "sparse", "colmap", ".")
 
 _MODEL_FILES = ("cameras.bin", "images.bin", "points3D.bin")
+
+
+# COLMAP's own camera-model table: id -> (name, number of `double` parameters).
+# `sfm auto` offers models COLMAP never had - `equirectangular`,
+# `thin-prism-fisheye` and friends (CLAUDE.md §7.1) - and an id that is not in
+# this table has an unknown parameter count, so `read_cameras` stops there
+# rather than guessing a stride and returning nonsense for every camera after
+# it. Width and height are read before the parameters, so even a truncated read
+# gives the aspect ratio the overlay actually needs.
+CAMERA_MODELS: dict[int, tuple[str, int]] = {
+    0: ("SIMPLE_PINHOLE", 3),
+    1: ("PINHOLE", 4),
+    2: ("SIMPLE_RADIAL", 4),
+    3: ("RADIAL", 5),
+    4: ("OPENCV", 8),
+    5: ("OPENCV_FISHEYE", 8),
+    6: ("FULL_OPENCV", 12),
+    7: ("FOV", 5),
+    8: ("SIMPLE_RADIAL_FISHEYE", 4),
+    9: ("RADIAL_FISHEYE", 5),
+    10: ("THIN_PRISM_FISHEYE", 12),
+}
+
+# Models whose leading parameter is a pinhole focal length in pixels, so that
+# `2*atan(width / 2f)` is the horizontal field of view. The fisheye models carry
+# a focal too, but it is not a pinhole one and that formula does not describe
+# them - they get no fov and the overlay falls back to its own frustum shape,
+# which is honest rather than confidently wrong.
+_PINHOLE_LIKE = frozenset({0, 1, 2, 3, 4, 6, 7})
+
+
+class Camera(NamedTuple):
+    """One intrinsic group. `sfm auto` writes one per image resolution."""
+    camera_id: int
+    model_id: int
+    model: str
+    width: int
+    height: int
+    params: tuple[float, ...]
 
 
 class Image(NamedTuple):
@@ -153,3 +193,64 @@ def point_count(path: Path) -> int:
     """The point count from the header alone, without reading the block."""
     with path.open("rb") as fh:
         return _read(fh, "<Q")[0]
+
+
+def read_cameras(path: Path) -> list[Camera]:
+    """Every intrinsic group of a `cameras.bin`, in the order it stores them.
+
+    Stops at the first model id outside `CAMERA_MODELS` rather than raising:
+    the record has no length field, so an unknown model makes everything after
+    it unreadable but leaves everything before it perfectly good. A caller that
+    wants one frustum shape only ever looks at the first entry.
+    """
+    cameras: list[Camera] = []
+    with path.open("rb") as fh:
+        (count,) = _read(fh, "<Q")
+        for _ in range(count):
+            camera_id, model_id = _read(fh, "<2i")
+            width, height = _read(fh, "<2Q")
+            known = CAMERA_MODELS.get(model_id)
+            if known is None:
+                break
+            name, n_params = known
+            params = _read(fh, f"<{n_params}d")
+            cameras.append(Camera(
+                camera_id=camera_id,
+                model_id=model_id,
+                model=name,
+                width=int(width),
+                height=int(height),
+                params=params,
+            ))
+    return cameras
+
+
+def frustum_shape(model: Path) -> tuple[Optional[float], Optional[float]]:
+    """(horizontal fov in radians, aspect ratio) for the camera overlay.
+
+    Read off `cameras.bin` rather than assumed, because a 360 rig is a
+    first-class input here (CLAUDE.md §1) and drawing its cameras as 16:9
+    pinholes would be a picture of a different capture.
+
+    Returns `(None, aspect)` when the model is not pinhole-like - a fisheye or
+    an equirectangular camera has no single horizontal fov a wire frustum could
+    stand for. The first group is the answer: `--camera-mode folder` splits on
+    image resolution, so several groups mean several resolutions, and the
+    overlay draws one frustum size for all of them either way.
+    """
+    try:
+        cameras = read_cameras(model / "cameras.bin")
+    except (OSError, ValueError, struct.error):
+        return None, None
+    if not cameras:
+        return None, None
+
+    camera = cameras[0]
+    aspect = camera.width / camera.height if camera.height else None
+    if camera.model_id not in _PINHOLE_LIKE or not camera.params:
+        return None, aspect
+
+    focal_x = camera.params[0]
+    if focal_x <= 0:
+        return None, aspect
+    return 2.0 * math.atan(camera.width / (2.0 * focal_x)), aspect

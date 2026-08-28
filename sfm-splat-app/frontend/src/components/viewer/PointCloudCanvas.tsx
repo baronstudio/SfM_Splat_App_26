@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { buildCameraRig, type CameraRig } from './cameraRig';
-import { applyUpFix, upFixPoint } from './frame';
+import { applyUp, upPoint } from './frame';
 import { fetchWithProgress, parsePointCloud, robustBounds } from './pointCloud';
 import type { CameraPose } from '@/types';
 
@@ -21,10 +21,13 @@ interface PointCloudCanvasProps {
   cameras: CameraPose[] | null;
   showCameras: boolean;
   showPath: boolean;
-  /** Draw the cloud 180 deg around X — see `frame.ts`. */
-  flipCloud: boolean;
-  /** Same for the camera overlay; the two frames are not always the same one. */
-  flipCameras: boolean;
+  /**
+   * Turn the scene over: the mapper levels the model itself and this is the
+   * other vertical, for the captures where it found the wrong one. One flag,
+   * applied once on the scene root — the cloud and the poses are in the same
+   * frame (`frame.ts`).
+   */
+  flipUp: boolean;
   fovX?: number | null;
   aspect?: number | null;
   /** The parsed positions, for whatever the parent wants to measure on them. */
@@ -36,12 +39,15 @@ interface PointCloudCanvasProps {
 
 export const PointCloudCanvas: React.FC<PointCloudCanvasProps> = ({
   url, pointSize, background, cameras, showCameras, showPath,
-  flipCloud, flipCameras, fovX, aspect,
+  flipUp, fovX, aspect,
   onPositions,
   onLoaded, onProgress, onError,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
+  // Everything drawn hangs off this one node, which carries the `Rx-90` that
+  // makes the reconstruction's +Z-up frame three.js's Y-up one (`frame.ts`).
+  const rootRef = useRef<THREE.Group | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -75,6 +81,9 @@ export const PointCloudCanvas: React.FC<PointCloudCanvasProps> = ({
     if (!container) return undefined;
 
     const scene = new THREE.Scene();
+    const root = new THREE.Group();
+    root.name = 'scene-root';
+    scene.add(root);
     const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 5000);
     camera.position.set(0, 2, 6);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -90,6 +99,7 @@ export const PointCloudCanvas: React.FC<PointCloudCanvasProps> = ({
     controls.rotateSpeed = 0.6;
 
     sceneRef.current = scene;
+    rootRef.current = root;
     cameraRef.current = camera;
     controlsRef.current = controls;
     rendererRef.current = renderer;
@@ -120,6 +130,7 @@ export const PointCloudCanvas: React.FC<PointCloudCanvasProps> = ({
       renderer.dispose();
       renderer.domElement.remove();
       sceneRef.current = null;
+      rootRef.current = null;
       cameraRef.current = null;
       controlsRef.current = null;
       rendererRef.current = null;
@@ -133,8 +144,8 @@ export const PointCloudCanvas: React.FC<PointCloudCanvasProps> = ({
 
   // ── The cloud ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene || !url) return undefined;
+    const root = rootRef.current;
+    if (!root || !url) return undefined;
 
     const abort = new AbortController();
     framedRef.current = false;
@@ -158,19 +169,20 @@ export const PointCloudCanvas: React.FC<PointCloudCanvasProps> = ({
         points.frustumCulled = false;
 
         if (pointsRef.current) {
-          scene.remove(pointsRef.current);
+          root.remove(pointsRef.current);
           pointsRef.current.geometry.dispose();
           (pointsRef.current.material as THREE.Material).dispose();
         }
-        scene.add(points);
+        root.add(points);
         pointsRef.current = points;
-
-        applyUpFix(points, flipCloud);
 
         const bounds = robustBounds(cloud.positions);
         if (bounds) {
           boundsRef.current = bounds;
-          frame(upFixPoint(bounds.centre, flipCloud), bounds.radius);
+          // The bounds are measured in the file's frame; the camera lives in
+          // the rotated one, so the centre has to make the same trip the root
+          // just took.
+          frame(upPoint(bounds.centre, flipUp), bounds.radius);
           framedRef.current = true;
         }
         onPositions?.(cloud.positions);
@@ -189,11 +201,11 @@ export const PointCloudCanvas: React.FC<PointCloudCanvasProps> = ({
 
   // ── Camera overlay ────────────────────────────────────────────────────────
   useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return undefined;
+    const root = rootRef.current;
+    if (!root) return undefined;
 
     if (rigRef.current) {
-      scene.remove(rigRef.current.group);
+      root.remove(rigRef.current.group);
       rigRef.current.dispose();
       rigRef.current = null;
     }
@@ -201,31 +213,32 @@ export const PointCloudCanvas: React.FC<PointCloudCanvasProps> = ({
 
     const rig = buildCameraRig(cameras, { fovX, aspect, showPath });
     if (!rig) return undefined;
-    applyUpFix(rig.group, flipCameras);
-    scene.add(rig.group);
+    root.add(rig.group);
     rigRef.current = rig;
     // Only when the cloud has not framed the view yet: with a cloud on screen,
     // moving the camera because a checkbox was ticked is disorienting.
     if (!framedRef.current) {
-      frame(upFixPoint([rig.centre.x, rig.centre.y, rig.centre.z], flipCameras), rig.radius * 1.4);
+      frame(upPoint([rig.centre.x, rig.centre.y, rig.centre.z], flipUp), rig.radius * 1.4);
       framedRef.current = true;
     }
 
     return () => {
       if (rigRef.current) {
-        scene.remove(rigRef.current.group);
+        root.remove(rigRef.current.group);
         rigRef.current.dispose();
         rigRef.current = null;
       }
     };
-  }, [cameras, showCameras, showPath, flipCameras, fovX, aspect, frame]);
+  }, [cameras, showCameras, showPath, flipUp, fovX, aspect, frame]);
 
   // -- Up axis ---------------------------------------------------------------
   useEffect(() => {
-    if (pointsRef.current) applyUpFix(pointsRef.current, flipCloud);
+    if (rootRef.current) applyUp(rootRef.current, flipUp);
+    // Rotating the scene under a camera that stays put swings the subject out
+    // of view, so a flip re-frames.
     const bounds = boundsRef.current;
-    if (bounds) frame(upFixPoint(bounds.centre, flipCloud), bounds.radius);
-  }, [flipCloud, frame]);
+    if (bounds) frame(upPoint(bounds.centre, flipUp), bounds.radius);
+  }, [flipUp, frame]);
 
 
   // The Reconstruction Region and its `TransformControls` gizmo used to live

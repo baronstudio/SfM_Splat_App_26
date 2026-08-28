@@ -1,13 +1,22 @@
 """Viewer previews: which file a step produced, and its browser-sized copy.
 
-The 3D viewer never loads a step's output directly. `rc_output/pointcloud.ply`
-is 18 MB of ASCII and `lfs_output/splat_*.ply` has been measured at 1.24 GB -
-so each source gets a decimated binary preview under `projects/<slug>/preview/`,
-served by the existing `/static` mount and rebuilt only when the source moves.
+The 3D viewer never loads a step's output directly. Step 3's sparse model is
+COLMAP binary rather than a PLY, and step 4's `splat.ply` was measured at
+**247 MB** for a small project (CLAUDE.md §7.9) - so each source gets a
+decimated binary preview under `projects/<slug>/preview/`, served by the
+existing `/static` mount and rebuilt only when the source moves.
 
 One preview per (source, level): the UI opens at the default level and can ask
 for a bigger one - up to the whole file - without throwing away the small one
 it is already showing.
+
+**Two sources, and they are found rather than named.** `sfm` is whichever
+`sparse/N` the reconstruction left (`sparse/0` is the largest component), and
+`train` is the checkpoint the trainer kept - `--save-only-latest-checkpoint`
+defaults 1, but that is the tool's default and not a promise, so the glob takes
+the highest step it finds instead of assuming there is one. Step 5's mesh is
+deliberately absent: a textured glb is neither a point cloud nor a splat, and
+whether it gets a third renderer or a thumbnail is still open (§13.6).
 """
 
 from __future__ import annotations
@@ -16,26 +25,22 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Callable, Optional
 
-from backend.core import ply
+from backend.core import colmap, ply
 
 PREVIEW_DIRNAME = "preview"
 
-# Where each wizard step leaves the thing worth looking at.
-SOURCE_DIRS: dict[str, str] = {
-    "rc": "rc_output",
-    "lfs": "lfs_output",
-    "export": "export",
-}
+# The sources the viewer can ask for, in wizard order.
+SOURCES: tuple[str, ...] = ("sfm", "train")
 
-# rc_output holds one known filename; the other two are scanned.
-SOURCE_NAMES: dict[str, tuple[str, ...]] = {
-    "rc": ("pointcloud.ply",),
-}
+# `sfm auto` writes the sparse cloud here and nowhere else.
+_SPARSE_POINTS = "points3D.bin"
 
-_SUFFIXES = (".ply", ".splat")
+_SPLAT_SUFFIXES = (".ply", ".splat")
+_STEP_IN_NAME = re.compile(r"step-(\d+)", re.IGNORECASE)
 
 ProgressFn = Callable[[float], None]
 
@@ -47,36 +52,75 @@ class PreviewError(RuntimeError):
 # -- Source discovery --------------------------------------------------------
 
 def find_source(project_path: Path, source: str) -> Optional[Path]:
-    """The file a given step left behind, or None.
+    """The file the given step left behind, or None."""
+    if source == "sfm":
+        return _find_sparse(project_path)
+    if source == "train":
+        return _find_splat(project_path)
+    raise PreviewError(f"Unknown preview source {source!r}")
 
-    Newest wins, not largest: with several `splat_<iter>.ply` checkpoints in
-    `lfs_output/`, the last one written is the last one trained, and a bigger
-    file from an earlier run is not a better answer.
+
+def _find_sparse(project_path: Path) -> Optional[Path]:
+    """`sparse/0/points3D.bin`, through the same finder every model reader uses.
+
+    `colmap.find_model` insists on a *complete* model, so a run killed between
+    writing `cameras.bin` and `points3D.bin` reports nothing to preview rather
+    than a file the parser would choke on.
     """
-    dirname = SOURCE_DIRS.get(source)
-    if dirname is None:
-        raise PreviewError(f"Unknown preview source {source!r}")
-    directory = project_path / dirname
-    if not directory.is_dir():
+    model = colmap.find_model(project_path / "sfm")
+    if model is None:
         return None
+    points = model / _SPARSE_POINTS
+    return points if points.is_file() and points.stat().st_size > 0 else None
 
-    known = SOURCE_NAMES.get(source)
-    if known:
-        for name in known:
-            candidate = directory / name
-            if candidate.is_file() and candidate.stat().st_size > 0:
-                return candidate
 
+def _find_splat(project_path: Path) -> Optional[Path]:
+    """The trained splat of the highest checkpoint under `train/`.
+
+    Highest step, not newest mtime: `--save-only-latest-checkpoint` normally
+    leaves exactly one `step-%09d.ckpt/`, but a run configured otherwise leaves
+    several written minutes apart, and the last one trained is the one worth
+    looking at. Files whose name carries no step number fall back to their
+    mtime, below everything numbered.
+    """
+    train = project_path / "train"
+    if not train.is_dir():
+        return None
     candidates = [
-        f for f in directory.iterdir()
-        if f.is_file() and f.suffix.lower() in _SUFFIXES and f.stat().st_size > 0
+        f for f in train.rglob("*")
+        if f.is_file() and f.suffix.lower() in _SPLAT_SUFFIXES
+        and f.stat().st_size > 0
     ]
     if not candidates:
         return None
-    # .ply before .splat at equal recency: LFS writes both, and only the PLY
-    # carries the spherical harmonics.
-    candidates.sort(key=lambda f: (f.stat().st_mtime, f.suffix.lower() == ".ply"))
-    return candidates[-1]
+
+    def rank(path: Path) -> tuple[int, int, float]:
+        match = _STEP_IN_NAME.search(str(path))
+        step = int(match.group(1)) if match else -1
+        # .ply before .splat at the same step: only the PLY carries the
+        # spherical harmonics, and it is the file SuperSplat would want.
+        return (step, 1 if path.suffix.lower() == ".ply" else 0,
+                path.stat().st_mtime)
+
+    return max(candidates, key=rank)
+
+
+# -- What a source is, and how it converts -----------------------------------
+
+def describe(src: Path) -> dict:
+    """Kind and point count of a source, from its header alone."""
+    if src.name == _SPARSE_POINTS:
+        return {"kind": ply.KIND_CLOUD, "total": colmap.point_count(src)}
+    return ply.describe(src)
+
+
+def _convert(src: Path, dst: Path, max_count: Optional[int],
+             progress: Optional[ProgressFn]) -> dict:
+    if src.name == _SPARSE_POINTS:
+        return ply.write_cloud(
+            colmap.iter_points(src), colmap.point_count(src), dst, max_count, progress,
+        )
+    return ply.convert(src, dst, max_count, progress)
 
 
 # -- Cache bookkeeping -------------------------------------------------------
@@ -185,13 +229,16 @@ def status(project_path: Path, slug: str, source: str,
         "available": True,
         "source_file": src.name,
         "source_bytes": stat.st_size,
-        "source_url": f"/static/{slug}/{SOURCE_DIRS[source]}/{src.name}",
+        # Relative to the project rather than to a table of directories: the
+        # sparse cloud lives under `sfm/sparse/<N>/` and which N it came from
+        # is part of the answer.
+        "source_url": f"/static/{slug}/{src.relative_to(project_path).as_posix()}",
         "max_count": max_count,
         "ready": False,
     }
     try:
-        described = ply.describe(src)
-    except (ply.PlyError, OSError) as exc:
+        described = describe(src)
+    except (ply.PlyError, OSError, ValueError) as exc:
         base["error"] = str(exc)
         return base
 
@@ -217,14 +264,14 @@ def build(project_path: Path, slug: str, source: str, max_count: Optional[int],
     if src is None:
         raise PreviewError(f"No {source} output to preview yet.")
 
-    described = ply.describe(src)
+    described = describe(src)
     target = _target(project_path, source, described["kind"], max_count,
                      _fingerprint(src))
     if _is_fresh(target, src):
         return status(project_path, slug, source, max_count)
 
     try:
-        meta = ply.convert(src, target, max_count, progress)
+        meta = _convert(src, target, max_count, progress)
     except (ply.PlyError, OSError, ValueError) as exc:
         raise PreviewError(f"{src.name}: {exc}") from exc
 

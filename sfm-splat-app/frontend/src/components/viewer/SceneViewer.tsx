@@ -1,14 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Boxes, Camera, Download, ExternalLink, FlipVertical2, RefreshCw, RotateCcw, Route,
+  Boxes, Camera, Download, FlipVertical2, RefreshCw, RotateCcw, Route,
   Maximize2, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { staticUrl } from '@/api/client';
 import { useDefaults } from '@/hooks/useDefaults';
-import { useSettings } from '@/hooks/useSettings';
 import { useCameras, usePreview } from '@/hooks/usePreview';
-import { isYDownFrame } from './frame';
 import PointCloudCanvas from './PointCloudCanvas';
 import SplatCanvas from './SplatCanvas';
 import type { PreviewSource } from '@/types';
@@ -19,6 +17,12 @@ import type { PreviewSource } from '@/types';
  * It picks the renderer from what the file *is*, not from which step asked:
  * a step can produce either a plain sparse cloud or a gaussian PLY, so keying
  * the viewer on the step number would sometimes pick the wrong renderer.
+ *
+ * There is no per-source frame correction any more. The sparse cloud, the
+ * trained splat and the camera overlay are all in one +Z-up frame — measured,
+ * not assumed (CLAUDE.md §7.3) — so the single `Rx-90` of `frame.ts` sits on
+ * the scene root of whichever canvas is mounted, and "Flip up" is a question
+ * about the capture rather than a repair of a convention mismatch.
  */
 
 interface SceneViewerProps {
@@ -50,7 +54,6 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
   projectId, source, refreshKey, withCameras = true, height = 420,
 }) => {
   const { defaults } = useDefaults();
-  const { settings } = useSettings();
   const viewerDefaults = defaults?.viewer;
 
   const [level, setLevel] = useState<number | null>(null);
@@ -118,17 +121,10 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
     }
   };
 
-  const supersplatBase = settings?.tools?.supersplat_url ?? 'https://superspl.at/editor';
   const cameraPoses = cameras?.available ? cameras.cameras : null;
   const isSplat = state?.kind === 'splat';
   const building = Boolean(state?.building);
   const canvasKey = `${state?.url ?? 'none'}#${viewNonce}`;
-
-  // The RC export is Y-down and the LFS output is Y-up (frame.ts), so the fix
-  // is per object, not per step. `upFlipped` turns the whole view over on top
-  // of that — RC's +Z is only the true vertical when the alignment found it.
-  const flipContent = isYDownFrame(source) !== upFlipped;
-  const flipCameras = !upFlipped;
 
   // The Reconstruction Region editor used to live here, and it held the parsed
   // preview so it could count the points inside the box. Both are deleted, not
@@ -221,7 +217,7 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
           size="sm"
           onClick={() => setUpFlipped((v) => !v)}
           className={`gap-1 text-xs ${upFlipped ? 'text-cyan-400' : 'text-slate-400 hover:text-slate-100'}`}
-          title="Turn the scene over — RealityScan's up axis is only a guess when the alignment had nothing vertical to lean on"
+          title="Turn the scene over — the mapper levels the model on the cameras, and that is the wrong vertical on a capture with nothing level in it"
         >
           <FlipVertical2 className="w-3.5 h-3.5" />
           Flip up
@@ -254,21 +250,6 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
             </Button>
           </a>
         )}
-        {isSplat && state.source_url && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => window.open(
-              `${supersplatBase}?load=${encodeURIComponent(staticUrl(state.source_url as string))}`,
-              '_blank', 'noopener,noreferrer',
-            )}
-            className="text-cyan-400 hover:text-cyan-300 gap-1 text-xs"
-            title="SuperSplat must be able to reach this machine to load the file"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            SuperSplat
-          </Button>
-        )}
       </div>
 
       {/* Canvas */}
@@ -287,8 +268,7 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
             cameras={cameraPoses}
             showCameras={showCameras}
             showPath={showPath}
-            flipCloud={flipContent}
-            flipCameras={flipCameras}
+            flipUp={upFlipped}
             fovX={cameras?.fov_x}
             aspect={cameras?.aspect}
             onProgress={(loaded, total) =>
@@ -301,14 +281,13 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
           <SplatCanvas
             // The scene rotation is read once, when the splat is added, so a
             // flip has to remount the canvas — unlike the point cloud.
-            key={`${canvasKey}#${flipContent}`}
+            key={`${canvasKey}#${upFlipped}`}
             url={state.url}
             background={viewerDefaults?.background ?? '#0b1220'}
             cameras={cameraPoses}
             showCameras={showCameras}
             showPath={showPath}
-            flipSplat={flipContent}
-            flipCameras={flipCameras}
+            flipUp={upFlipped}
             fovX={cameras?.fov_x}
             aspect={cameras?.aspect}
             onProgress={(percent) => setLoadPercent(percent)}

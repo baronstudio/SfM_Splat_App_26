@@ -102,6 +102,12 @@ def read_cameras(project_path: Path) -> dict:
     sequence_ids = sorted(
         {c["sequence_id"] for c in cameras if c["sequence_id"] is not None}
     )
+    # The frustums are drawn at the lens the reconstruction actually solved, not
+    # at a 16:9 guess. A fisheye or an equirectangular camera answers no fov -
+    # there is no single horizontal angle a wire frustum stands for - and the
+    # overlay falls back to its own shape rather than drawing a confident lie
+    # (CLAUDE.md §7.1: the 360 lens models are the point of that setting).
+    fov_x, aspect = colmap.frustum_shape(model)
     return {
         "available": True,
         "count": len(cameras),
@@ -114,5 +120,7 @@ def read_cameras(project_path: Path) -> dict:
         "missing_count": len(missing),
         "input_count": len(input_names),
         "sequence_ids": sequence_ids,
+        "fov_x": fov_x,
+        "aspect": aspect,
         "models": colmap.count_models(project_path / "sfm"),
     }

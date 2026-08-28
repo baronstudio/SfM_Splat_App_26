@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import { buildCameraRig, type CameraRig } from './cameraRig';
-import { applyUpFix, UP_FIX_QUATERNION } from './frame';
+import { applyUp, upQuaternion } from './frame';
 import type { CameraPose } from '@/types';
 
 /**
@@ -10,8 +10,9 @@ import type { CameraPose } from '@/types';
  * worker.
  *
  * It reads the `.splat` preview written by `backend/core/ply.py`, never the
- * training PLY — the source of the sample scene is 1.24 GB and carries 45
- * spherical-harmonic coefficients per gaussian that a preview does not use.
+ * training PLY — spirula's is 247 MB for a small project (CLAUDE.md §7.9) and
+ * carries 45 spherical-harmonic coefficients per gaussian that a preview does
+ * not use.
  *
  * `sharedMemoryForWorkers` is off on purpose: it needs COOP/COEP headers that
  * neither the Vite dev server nor the FastAPI static mount sends, and without
@@ -24,10 +25,13 @@ interface SplatCanvasProps {
   cameras: CameraPose[] | null;
   showCameras: boolean;
   showPath: boolean;
-  /** Draw the splat 180 deg around X — see `frame.ts`. Read once, at load. */
-  flipSplat: boolean;
-  /** Same for the camera overlay; the two frames are not always the same one. */
-  flipCameras: boolean;
+  /**
+   * Turn the scene over — the other vertical (`frame.ts`). The splat and the
+   * overlay take the same rotation, because they are in the same frame; the
+   * splat's is read once, when the scene is added, so the parent remounts the
+   * canvas on a flip rather than expecting this to be live.
+   */
+  flipUp: boolean;
   fovX?: number | null;
   aspect?: number | null;
   onLoaded?: () => void;
@@ -59,7 +63,7 @@ function splatBounds(mesh: GaussianSplats3D.SplatMesh) {
 }
 
 export const SplatCanvas: React.FC<SplatCanvasProps> = ({
-  url, background, cameras, showCameras, showPath, flipSplat, flipCameras, fovX, aspect,
+  url, background, cameras, showCameras, showPath, flipUp, fovX, aspect,
   onLoaded, onProgress, onError,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -100,7 +104,7 @@ export const SplatCanvas: React.FC<SplatCanvasProps> = ({
       format: GaussianSplats3D.SceneFormat.Splat,
       // A scene transform, not a rewrite of the splats: `getSplatCenter(i, v,
       // true)` below returns the transformed centres, so the framing follows.
-      rotation: flipSplat ? UP_FIX_QUATERNION : [0, 0, 0, 1],
+      rotation: upQuaternion(flipUp),
       showLoadingUI: false,
       progressiveLoad: true,
       onProgress: (percent: number) => onProgress?.(percent),
@@ -164,7 +168,8 @@ export const SplatCanvas: React.FC<SplatCanvasProps> = ({
 
     const rig = buildCameraRig(cameras, { fovX, aspect, showPath });
     if (!rig) return undefined;
-    applyUpFix(rig.group, flipCameras);
+    // The same rotation the splat scene was given above, by the same rule.
+    applyUp(rig.group, flipUp);
     scene.add(rig.group);
     rigRef.current = rig;
 
@@ -175,7 +180,7 @@ export const SplatCanvas: React.FC<SplatCanvasProps> = ({
         rigRef.current = null;
       }
     };
-  }, [cameras, showCameras, showPath, flipCameras, fovX, aspect, url]);
+  }, [cameras, showCameras, showPath, flipUp, fovX, aspect, url]);
 
   return <div ref={containerRef} className="w-full h-full" />;
 };
