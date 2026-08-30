@@ -3,8 +3,14 @@ import { useState, useEffect } from 'react';
 // Matches the payload of backend/api/routes/version.py
 export interface AppVersion {
   name: string;
-  /** Commit date as YYYY.MM.DD, or null when the app is not run from a clone. */
+  /**
+   * Commit date and commit number as YYYY.MM.DD.N, or null when the app is not
+   * run from a clone. The count is what makes two builds of the same day
+   * distinguishable without reading the sha.
+   */
   version: string | null;
+  /** `git rev-list --count HEAD`, the ordinal half of `version`. */
+  commit_count: number | null;
   commit: string | null;
   commit_short: string | null;
   commit_date: string | null;

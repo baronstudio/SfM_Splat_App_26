@@ -1,10 +1,16 @@
 """Application identity: name, version, commit.
 
 The version number is derived from the repository itself — the date of the
-commit the app is running, `YYYY.MM.DD`, which is what the GitHub history
-shows for that commit. Deriving it from the local clone rather than querying
-github.com keeps it honest: it describes the code actually running, not the
-tip of the remote, and it works with no network.
+commit the app is running followed by that commit's number in the history,
+`YYYY.MM.DD.N`. The date is what the GitHub history shows for that commit; the
+count is `git rev-list --count HEAD`, which makes the version **unique and
+monotone per commit** where the date alone repeats on every day that carries
+more than one. Deriving it from the local clone rather than querying github.com
+keeps it honest: it describes the code actually running, not the tip of the
+remote, and it works with no network.
+
+A shallow clone counts only the commits it has, so the number is smaller than
+the history's — the sha beside it is what identifies the build either way.
 
 **Except on a machine the code was copied to.** `scripts/sync_staging.sh`
 delivers with `cp` over `git ls-files`; it never touches `.git`, so the staging
@@ -70,6 +76,15 @@ def _git_ok(*args: str) -> bool:
     return out is not None and out.returncode == 0
 
 
+def _commit_count() -> int | None:
+    """Number of commits reachable from HEAD — the version's ordinal half."""
+    out = _git("rev-list", "--count", "HEAD")
+    try:
+        return int(out) if out else None
+    except ValueError:
+        return None
+
+
 def _commit_url(remote: str | None, sha: str | None) -> str | None:
     """https URL of the commit on GitHub, from whatever form `origin` takes."""
     if not remote or not sha:
@@ -87,11 +102,16 @@ def _read_git() -> dict:
     iso = _git("log", "-1", "--format=%cI")
     branch = _git("rev-parse", "--abbrev-ref", "HEAD")
     remote = _git("config", "--get", "remote.origin.url")
+    count = _commit_count()
 
     return {
         "name": APP_NAME,
-        # No git, no version: saying "0.0.0" would be inventing one.
-        "version": date,
+        # No git, no version: saying "0.0.0" would be inventing one. A date
+        # without a count is still a version, so the suffix is appended rather
+        # than required — a repository git can date but not count is not one
+        # this app should refuse to name.
+        "version": f"{date}.{count}" if date and count is not None else date,
+        "commit_count": count,
         "commit": sha,
         "commit_short": short,
         "commit_date": iso,
@@ -136,6 +156,7 @@ def _from_stamp(stamp: dict) -> dict:
     return {
         "name": APP_NAME,
         "version": stamp.get("version"),
+        "commit_count": stamp.get("commit_count"),
         "commit": sha,
         "commit_short": stamp.get("commit_short"),
         "commit_date": stamp.get("commit_date"),
