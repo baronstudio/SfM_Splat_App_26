@@ -36,6 +36,16 @@ declare module '@mkkellogg/gaussian-splats-3d' {
   export interface SplatMesh {
     getSplatCount(): number;
     getSplatCenter(index: number, out: THREE.Vector3, applyTransform: boolean): void;
+    /**
+     * The splat shader, which `viewer/cropShader.ts` patches to hide the
+     * gaussians a crop excludes (CLAUDE.md §7.6b).
+     *
+     * `SplatMesh extends THREE.Mesh`, so this is the mesh's own material — but
+     * it is declared here because the library **rebuilds it** on every non-
+     * incremental mesh build, which is what makes the patch something to
+     * re-apply rather than to install once.
+     */
+    material: THREE.ShaderMaterial | null;
   }
 
   export interface ViewerOptions {
@@ -77,7 +87,21 @@ declare module '@mkkellogg/gaussian-splats-3d' {
   export class Viewer {
     constructor(options?: ViewerOptions);
     camera: THREE.PerspectiveCamera;
-    controls: { target: THREE.Vector3; update(): void } | null;
+    // OrbitControls. `enabled` is turned off for the length of a crop-gizmo
+    // drag, or the camera orbits while a handle is being pulled and the volume
+    // reads as refusing to move (`viewer/cropGizmo.ts`).
+    controls: {
+      target: THREE.Vector3;
+      update(): void;
+      enabled: boolean;
+      // This build's OrbitControls is a fork with damping on
+      // (`dampingFactor = 0.05`), and these two drop the residual of the last
+      // drag. `viewer/viewpoint.ts` calls them before it teleports the camera,
+      // because a damped `update()` keeps applying that residual afterwards and
+      // a restore then lands near the saved view rather than on it.
+      clearDampedRotation?(): void;
+      clearDampedPan?(): void;
+    } | null;
     renderer: THREE.WebGLRenderer;
     threeScene: THREE.Scene;
     splatMesh: SplatMesh;

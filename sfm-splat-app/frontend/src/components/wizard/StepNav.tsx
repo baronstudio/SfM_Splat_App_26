@@ -1,5 +1,5 @@
 import React from 'react';
-import { Upload, Film, Crosshair, Cpu, Package, Box, CheckCircle, XCircle } from 'lucide-react';
+import { Upload, Film, Crosshair, Cpu, Package, CheckCircle, XCircle } from 'lucide-react';
 import { usePipelineStore } from '@/store/pipelineStore';
 import type { StepStatus } from '@/types';
 
@@ -9,7 +9,6 @@ const STEPS = [
   { index: 3, icon: Crosshair, label: 'SfM', key: 'sfm' },
   { index: 4, icon: Cpu, label: 'Training', key: 'train' },
   { index: 5, icon: Package, label: 'Mesh', key: 'mesh' },
-  { index: 6, icon: Box, label: 'Blender Scene', key: 'blender' },
 ] as const;
 
 function StatusBadge({ status }: { status: StepStatus }) {

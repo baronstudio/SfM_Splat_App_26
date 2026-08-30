@@ -8,11 +8,13 @@ from sqlmodel import Session
 from backend.core.pipeline_runner import (
     request_abort,
     run_analysis_only,
+    run_crop_only,
     run_geometry_only,
     run_mask_generation,
     request_pause,
     request_resume,
     run_pipeline,
+    run_splat_export_only,
 )
 from backend.db.database import get_session
 from backend.models.project import Project
@@ -204,3 +206,46 @@ async def generate_geometry(body: AnalyzeBody, session: Session = Depends(get_se
     _running_tasks[body.project_id] = task
 
     return {"status": "geometry", "project_id": body.project_id}
+
+
+@router.post("/crop")
+async def crop_splat(body: AnalyzeBody, session: Session = Depends(get_session)):
+    """Cut step 4's splat to the stored crop volumes (CLAUDE.md §7.6b).
+
+    Separate from /start for the same reason /geometry is: it must not re-train.
+    A 30 000-iteration run measured 956 s on the reference project and the crop
+    that follows it measured under a second — tying the two together would make
+    every adjustment of a box cost sixteen minutes, which is exactly what §6.3's
+    "the expensive phase must never be redone to change a threshold" forbids.
+
+    It writes `train/crop/splat.ply` beside the trained one and never over it,
+    so this route can be called as often as the user drags a gizmo, and calling
+    it with no volumes clears the crop rather than failing.
+    """
+    _claim_slot(body.project_id, session, "cropping the splat")
+
+    task = asyncio.create_task(run_crop_only(body.project_id, body.settings))
+    _running_tasks[body.project_id] = task
+
+    return {"status": "cropping", "project_id": body.project_id}
+
+
+@router.post("/export-splat")
+async def export_splat(body: AnalyzeBody, session: Session = Depends(get_session)):
+    """Write a deliverable copy of step 4's splat (CLAUDE.md §7.6c).
+
+    Separate from /start and from /crop, and for the third time the same
+    reason: it must not re-train. It is also the one pass on this router whose
+    output the pipeline never reads back — `train/export/` is a drawer of files
+    to download, not an input to step 5 — so it can be re-run per format as
+    often as the user wants a different one without moving anything downstream.
+
+    The source is `resolve_splat`, so an export made after a crop carries the
+    crop, and the run's own log line names which file it read.
+    """
+    _claim_slot(body.project_id, session, "exporting the splat")
+
+    task = asyncio.create_task(run_splat_export_only(body.project_id, body.settings))
+    _running_tasks[body.project_id] = task
+
+    return {"status": "exporting", "project_id": body.project_id}

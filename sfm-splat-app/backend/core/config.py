@@ -21,8 +21,9 @@ HWACCELS = ("none", "auto", "cuda", "d3d11va", "dxva2", "qsv", "vulkan")
 
 class ToolPaths(BaseModel):
     # One binary drives steps 3 to 5: sfm, train, mesh, sam and geometry are all
-    # tools inside it (CLAUDE.md §5.1). `rc_exe_path`, `lfs_exe_path` and
-    # `supersplat_url` are gone with the tools they named.
+    # tools inside it (CLAUDE.md §5.1). `rc_exe_path`, `lfs_exe_path`,
+    # `supersplat_url` and `blender_exe_path` are gone with the tools and the
+    # step they named.
     spirula_exe_path: Optional[str] = None
     # Where `spirula sam` and `spirula geometry` cache the checkpoints they fetch
     # on first use. The tool's own default is
@@ -32,7 +33,12 @@ class ToolPaths(BaseModel):
     spirula_model_cache: Optional[str] = None
     ffmpeg_path: str = ""
     ffmpeg_hwaccel: str = "none"
-    blender_exe_path: Optional[str] = None
+    # `@playcanvas/splat-transform`, the optional Node CLI behind the three
+    # compressed export formats (CLAUDE.md §7.6c). Empty means "look where
+    # `npm install --prefix tools/splat-transform` puts it, then on PATH" —
+    # `core/steps/splat_transform.py` owns that search. Nothing else in the app
+    # needs it, so an install that never exports a .sog never sets it.
+    splat_transform_path: Optional[str] = None
 
 
 class AppConfig(BaseModel):
@@ -65,7 +71,7 @@ def load_config() -> AppConfig:
             spirula_model_cache=raw.get("spirula_model_cache"),
             ffmpeg_path=raw.get("ffmpeg_path", ""),
             ffmpeg_hwaccel=raw.get("ffmpeg_hwaccel", "none") or "none",
-            blender_exe_path=raw.get("blender_exe_path"),
+            splat_transform_path=raw.get("splat_transform_path"),
         ),
     )
 

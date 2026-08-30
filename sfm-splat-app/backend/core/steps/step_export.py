@@ -1,8 +1,8 @@
 """step_export.py — the second half of step 5: fill `export/`.
 
-Steps 5 and 6 share `export/` (CLAUDE.md §7.10, §14.1): 5 fills it, 6 adds the
-Blender scene to it, and resetting 5 therefore takes 6 with it. This module is
-the filling.
+`export/` is step 5's delivery drawer (CLAUDE.md §7.10, §14.1): the mesh run
+fills it with the splat it meshed and the mesh it wrote, and a step 5 reset
+clears it. This module is the filling.
 
 **Two sources, and neither of them is `lfs_output/`.** That directory went with
 LichtFeld Studio (§12, 2026-08-27) and this module used to scan it; it now takes
@@ -34,8 +34,8 @@ import shutil
 from pathlib import Path
 from typing import Any, Optional
 
+from backend.core.steps.step_crop import resolve_splat
 from backend.core.steps.step_mesh import find_outputs
-from backend.core.steps.step_train import find_splat
 
 
 def _link_or_copy(source: Path, target: Path) -> None:
@@ -50,11 +50,13 @@ def _link_or_copy(source: Path, target: Path) -> None:
 def collect_sources(project_path: Path) -> list[tuple[str, Path]]:
     """`(role, path)` for everything step 5 exports, in wizard order.
 
-    The role is what step 6 and the UI ask by: `splat` is the one file the
-    Blender importer wants, and there is exactly one of it.
+    The role is what the UI asks by: there is exactly one `splat`, and
+    `resolve_splat` is what decides whether that is the trained splat or the
+    cropped one (CLAUDE.md 7.6b) - the log line below names the source either
+    way.
     """
     found: list[tuple[str, Path]] = []
-    splat = find_splat(project_path / "train")
+    splat, _cropped = resolve_splat(project_path / "train")
     if splat is not None:
         found.append(("splat", splat))
     found += [("mesh", p) for p in find_outputs(project_path / "mesh")]
@@ -65,10 +67,10 @@ def find_export_splat(export_dir: Path) -> Optional[Path]:
     """The exported splat, told apart from an exported *mesh* PLY.
 
     `--format ply` writes `mesh.ply`, which sorts before `splat.ply`: the
-    predecessor's `glob("*.ply")[0]` would hand step 6 the mesh and Blender
-    would import a surface as a gaussian cloud. The name this module wrote is
-    what settles it, with the glob left as the fallback for an `export/` filled
-    by an older build.
+    predecessor's `glob("*.ply")[0]` would hand a caller asking for the gaussian
+    cloud a surface mesh instead. The name this module wrote is what settles it,
+    with the glob left as the fallback for an `export/` filled by an older
+    build.
     """
     named = export_dir / "splat.ply"
     if named.is_file():
@@ -127,6 +129,6 @@ async def run_export(project_path: Path, broadcast_fn, settings: dict) -> dict:
     return {
         "export_dir": str(export_dir),
         "files": files,
-        # Step 6 imports this one; `mesh.ply` is not it.
+        # The gaussian cloud of the two PLYs this may hold; `mesh.ply` is not it.
         "splat_path": splat_path,
     }

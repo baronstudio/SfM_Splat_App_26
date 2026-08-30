@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
-  Boxes,
   Clapperboard,
   Filter,
   FolderCog,
@@ -9,6 +8,7 @@ import {
   Mountain,
   Orbit,
   PackageOpen,
+  BrainCircuit,
   RotateCcw,
   Scan,
   Sparkles,
@@ -31,6 +31,7 @@ import TrainSettings from '@/components/settings/TrainSettings';
 import MaskSettings from '@/components/settings/MaskSettings';
 import GeometrySettings from '@/components/settings/GeometrySettings';
 import MeshSettings from '@/components/settings/MeshSettings';
+import CheckpointsSection from '@/components/settings/CheckpointsSection';
 import { useDefaults } from '@/hooks/useDefaults';
 import { useSettings } from '@/hooks/useSettings';
 import type { AppDefaults, DefaultsSection } from '@/types';
@@ -172,7 +173,11 @@ const Choice: React.FC<{
 
 /* ── Sections ───────────────────────────────────────────────────────────── */
 
-type SectionId = DefaultsSection | 'tools';
+// Two sections of this panel are not `defaults.json` sections at all:
+// `tools` is config.json (layer 1 of CLAUDE.md §4) and `models` is the
+// checkpoint cache on this machine. Both are installation state, which is
+// why they live in the global panel and not on a wizard step.
+type SectionId = DefaultsSection | 'tools' | 'models';
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ElementType }[] = [
   { id: 'extract', label: 'Extraction', icon: Clapperboard },
@@ -183,9 +188,9 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ElementType }[] = [
   { id: 'train', label: 'Training', icon: Sparkles },
   { id: 'mesh', label: 'Mesh', icon: Box },
   { id: 'export', label: 'Export', icon: PackageOpen },
-  { id: 'blender', label: 'Blender', icon: Boxes },
   { id: 'viewer', label: '3D viewer', icon: Orbit },
   { id: 'tools', label: 'Tools', icon: FolderCog },
+  { id: 'models', label: 'Checkpoints', icon: BrainCircuit },
 ];
 
 interface AppSetupPanelProps {
@@ -236,7 +241,7 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
   };
 
   const handleResetSection = async () => {
-    if (section === 'tools') return;
+    if (section === 'tools' || section === 'models') return;
     await resetDefaults(section);
   };
 
@@ -728,15 +733,80 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
               </div>
             )}
 
+            {/* The deliverable export of step 4's splat (CLAUDE.md §7.6c).
+                Every field here bar the format is a *reduction*, and every one
+                of them ships off: the default export is the trained splat byte
+                for byte. Step 4's own panel shows the same section with the
+                measured cost of each choice beside it. */}
             {draft && section === 'export' && (
               <div className="divide-y divide-slate-800">
-                <Row label="Format">
+                <Row
+                  label="Format"
+                  hint="SOG, SPZ and Compressed PLY are written by @playcanvas/splat-transform, which is optional; PLY and .splat need nothing."
+                >
                   <Choice
                     value={draft.export.format}
                     onChange={(v) => patch('export', 'format', v)}
                     options={[
                       { value: 'ply', label: 'PLY' },
                       { value: 'splat', label: 'SPLAT' },
+                      { value: 'sog', label: 'SOG' },
+                      { value: 'spz', label: 'SPZ' },
+                      { value: 'compressed-ply', label: 'Compressed PLY' },
+                    ]}
+                  />
+                </Row>
+                <Row
+                  label="Spherical harmonics"
+                  hint="Highest band kept. 'Keep' writes what the trainer wrote; 0 drops all 45 f_rest_* and 72.6 % of every vertex with them (measured 3.65x smaller)."
+                >
+                  <Choice
+                    value={draft.export.sh_degree === null
+                      ? 'keep' : String(draft.export.sh_degree)}
+                    onChange={(v) => patch(
+                      'export', 'sh_degree', v === 'keep' ? null : Number(v),
+                    )}
+                    options={[
+                      { value: 'keep', label: 'Keep' },
+                      { value: '2', label: '2' },
+                      { value: '1', label: '1' },
+                      { value: '0', label: '0' },
+                    ]}
+                  />
+                </Row>
+                <Row
+                  label="Opacity floor"
+                  hint="Linear alpha, 0 = off. Spirula trains at low opacity by design — the usual 1/255 threshold drops ~1 % of a splat here, and 0.05 dropped 43 %."
+                >
+                  <NumField
+                    value={draft.export.opacity_min}
+                    step={0.005}
+                    min={0}
+                    max={0.99}
+                    onChange={(v) => patch('export', 'opacity_min', v)}
+                  />
+                </Row>
+                <Row
+                  label="Max gaussians"
+                  hint="0 = no limit. Nothing is re-fitted after a cut, so a deep target thins the picture rather than simplifying it."
+                >
+                  <NumField
+                    value={draft.export.max_count}
+                    step={10000}
+                    min={0}
+                    onChange={(v) => patch('export', 'max_count', v)}
+                  />
+                </Row>
+                <Row
+                  label="Which gaussians"
+                  hint="How the cap chooses: by opacity x volume, or an even spread over the file (never the first N — a PLY is not shuffled)."
+                >
+                  <Choice
+                    value={draft.export.selection}
+                    onChange={(v) => patch('export', 'selection', v)}
+                    options={[
+                      { value: 'importance', label: 'Importance' },
+                      { value: 'uniform', label: 'Evenly' },
                     ]}
                   />
                 </Row>
@@ -747,25 +817,6 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
                   <TextField
                     value={draft.export.pattern}
                     onChange={(v) => patch('export', 'pattern', v)}
-                  />
-                </Row>
-              </div>
-            )}
-
-            {draft && section === 'blender' && (
-              <div className="divide-y divide-slate-800">
-                <Row label="Scene scale">
-                  <NumField
-                    value={draft.blender.scene_scale}
-                    step={0.1}
-                    min={0.01}
-                    onChange={(v) => patch('blender', 'scene_scale', v)}
-                  />
-                </Row>
-                <Row label="Import mode">
-                  <TextField
-                    value={draft.blender.import_mode}
-                    onChange={(v) => patch('blender', 'import_mode', v)}
                   />
                 </Row>
               </div>
@@ -828,31 +879,47 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
               </div>
             )}
 
+            {section === 'models' && <CheckpointsSection active={section === 'models'} />}
+
             {section === 'tools' && settings && (
               <div className="divide-y divide-slate-800">
                 <p className="text-xs text-slate-500 pb-3">
                   Installation settings — stored in config.json. Type or paste a full path,
                   then press Enter or click away to save. Escape cancels.
                 </p>
+                {/* One binary drives steps 3 to 5 — sfm, train, mesh, sam and
+                    geometry are tools inside it (CLAUDE.md §5.1). The two rows
+                    this replaced named RealityScan and LichtFeld Studio, the
+                    CUDA pair this project exists to be free of (§12,
+                    2026-08-27); they had been writing config.json keys nothing
+                    read since the port. */}
                 <Row
-                  label="RealityScan executable"
+                  label="Spirula Studio executable"
                   wide
-                  hint="Full path to RealityScan.exe."
+                  hint="One binary, six tools — SfM, training, meshing, masking and geometry all live in it. `setup.py` fetches it into tools/spirula/."
                 >
                   <PathField
-                    value={settings.tools.rc_exe_path ?? ''}
-                    placeholder="C:\Program Files\Epic Games\RealityScan\RealityScan.exe"
+                    value={settings.tools.spirula_exe_path ?? ''}
+                    placeholder="tools/spirula/spirula.exe"
                     onCommit={(v) =>
-                      updateSettings({ tools: { ...settings.tools, rc_exe_path: v || null } })
+                      updateSettings({
+                        tools: { ...settings.tools, spirula_exe_path: v || null },
+                      })
                     }
                   />
                 </Row>
-                <Row label="LichtFeld Studio executable" wide>
+                <Row
+                  label="Checkpoint cache"
+                  wide
+                  hint="Where the SAM and geometry checkpoints are installed. Empty means spirula's own model directory, which is where its automatic fetch lands — the one place a file this app installs and a file the tool downloads are the same file. Manage the checkpoints themselves under Checkpoints."
+                >
                   <PathField
-                    value={settings.tools.lfs_exe_path ?? ''}
-                    placeholder="C:\Tools\LichtFeldStudio\lichtfeld.exe"
+                    value={settings.tools.spirula_model_cache ?? ''}
+                    placeholder="%LOCALAPPDATA%\spirula-studio\models"
                     onCommit={(v) =>
-                      updateSettings({ tools: { ...settings.tools, lfs_exe_path: v || null } })
+                      updateSettings({
+                        tools: { ...settings.tools, spirula_model_cache: v || null },
+                      })
                     }
                   />
                 </Row>
@@ -885,21 +952,25 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
                     ]}
                   />
                 </Row>
-                <Row label="Blender executable" wide>
+                {/* Optional, and the only thing in this app that wants it are
+                    the three compressed export formats of CLAUDE.md §7.6c.
+                    Empty is the normal state: the resolver looks in
+                    `tools/splat-transform/` and then on PATH by itself. The row
+                    it replaced was `supersplat_url`, which left config.json
+                    with the two CUDA tools (§12, 2026-08-28) and had been a
+                    field writing a key nothing read ever since. */}
+                <Row
+                  label="splat-transform"
+                  hint="Optional — SOG / SPZ / compressed PLY exports only. Leave empty to use tools/splat-transform/, installed with: npm install --prefix tools/splat-transform @playcanvas/splat-transform"
+                  wide
+                >
                   <PathField
-                    value={settings.tools.blender_exe_path ?? ''}
-                    placeholder="C:\Program Files\Blender Foundation\Blender 4.2\blender.exe"
+                    value={settings.tools.splat_transform_path ?? ''}
+                    placeholder="tools/splat-transform/node_modules/.bin/splat-transform.cmd"
                     onCommit={(v) =>
-                      updateSettings({ tools: { ...settings.tools, blender_exe_path: v || null } })
-                    }
-                  />
-                </Row>
-                <Row label="SuperSplat URL" wide>
-                  <PathField
-                    value={settings.tools.supersplat_url ?? ''}
-                    placeholder="https://superspl.at/editor"
-                    onCommit={(v) =>
-                      updateSettings({ tools: { ...settings.tools, supersplat_url: v } })
+                      updateSettings({
+                        tools: { ...settings.tools, splat_transform_path: v || null },
+                      })
                     }
                   />
                 </Row>
@@ -917,7 +988,7 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
             {!error && !dirty && <span className="text-slate-600">Saved</span>}
           </div>
           <div className="flex items-center gap-2">
-            {section !== 'tools' && (
+            {section !== 'tools' && section !== 'models' && (
               <Button
                 variant="outline"
                 size="sm"
@@ -928,14 +999,16 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
                 Reset this section
               </Button>
             )}
-            <Button
-              size="sm"
-              disabled={!dirty || saving}
-              onClick={handleSave}
-              className="bg-cyan-600 hover:bg-cyan-500 text-white"
-            >
-              {saving ? 'Saving…' : 'Save defaults'}
-            </Button>
+            {section !== 'models' && (
+              <Button
+                size="sm"
+                disabled={!dirty || saving}
+                onClick={handleSave}
+                className="bg-cyan-600 hover:bg-cyan-500 text-white"
+              >
+                {saving ? 'Saving…' : 'Save defaults'}
+              </Button>
+            )}
           </div>
         </div>
       </SheetContent>

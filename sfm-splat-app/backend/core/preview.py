@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from backend.core import colmap, ply
+from backend.core.steps.step_splat_export import EXPORT_DIR_NAME
 
 PREVIEW_DIRNAME = "preview"
 
@@ -146,6 +147,12 @@ def _find_splat(project_path: Path) -> Optional[Path]:
         f for f in train.rglob("*")
         if f.is_file() and f.suffix.lower() in _SPLAT_SUFFIXES
         and f.stat().st_size > 0
+        # `train/export/` is the deliverable drawer (CLAUDE.md §7.6c) and is
+        # explicitly not pipeline data. Its files are reduced on purpose — a
+        # `.compressed.ply` would parse here as a plain point cloud and draw as
+        # its vertices — and with no `step-*` in their names they would win this
+        # ranking outright the moment a checkpoint was missing.
+        and EXPORT_DIR_NAME not in f.relative_to(train).parts
     ]
     if not candidates:
         return None

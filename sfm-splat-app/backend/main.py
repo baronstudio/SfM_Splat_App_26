@@ -15,7 +15,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.api import file_handles, websocket
-from backend.api.routes import defaults, files, pipeline, projects, settings, version
+from backend.api.routes import (
+    defaults,
+    files,
+    models,
+    pipeline,
+    projects,
+    settings,
+    version,
+)
 from backend.core.pipeline_runner import reconcile_orphaned_steps
 from backend.db.database import create_db_and_tables
 
@@ -49,6 +57,9 @@ app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(defaults.router, prefix="/api/defaults", tags=["defaults"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
+# Installation-level, like /api/settings: the neural checkpoints of §7.4 and
+# §7.5 are a property of this machine, not of a project (backend/core/model_store.py).
+app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(version.router, prefix="/api/version", tags=["version"])
 app.include_router(websocket.router)
 
@@ -63,6 +74,13 @@ mimetypes.add_type("application/octet-stream", ".ply")
 # there.
 mimetypes.add_type("model/gltf-binary", ".glb")
 mimetypes.add_type("model/gltf+json", ".gltf")
+# The compressed export formats (CLAUDE.md 7.6c). Same argument as `.splat`
+# above, and it bites harder here: these are downloads rather than previews, and
+# a `.sog` re-encoded as UTF-8 on the way out is a corrupt deliverable that only
+# fails when somebody else opens it. `.compressed.ply` ends in `.ply` and is
+# already covered.
+mimetypes.add_type("application/octet-stream", ".sog")
+mimetypes.add_type("application/octet-stream", ".spz")
 
 # A cancelled download must not leave the file open - see the module.
 file_handles.apply_sync_close()

@@ -27,13 +27,12 @@ const STEP_LABELS: Record<number, string> = {
   0: 'Not started',
   1: 'Import',
   2: 'Extract',
-  3: 'RS Align',
-  4: 'LFS Train',
-  5: 'Export',
-  6: 'Blender',
+  3: 'SfM',
+  4: 'Training',
+  5: 'Mesh',
 };
 
-const TOTAL_STEPS = 6;
+const TOTAL_STEPS = 5;
 
 /**
  * The backend serialises naive UTC datetimes, with no offset. `new Date()`

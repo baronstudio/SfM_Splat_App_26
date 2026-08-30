@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from typing import List, Optional
 
@@ -6,12 +7,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from backend.core import cameras, colmap, frames as frame_files, preview, sources
+from backend.core import (
+    cameras, colmap, crop, frames as frame_files, ply, preview, sources,
+    splat_export, viewpoint,
+)
 from backend.core.config import app_config
+from backend.core.steps import splat_transform, step_crop, step_splat_export
 from backend.core.steps.step_analyze import read_json
 from backend.core.steps.step_export import find_export_splat
 from backend.core.steps.step_mesh import find_outputs
-from backend.core.steps.step_train import find_splat
+from backend.core.steps.step_train import find_splat, splat_count
 from backend.db.database import get_session
 from backend.models.project import Project
 
@@ -147,6 +152,210 @@ async def read_train_result(project_id: str, session: Session = Depends(get_sess
             "normals": _count("normals"),
         },
     }
+
+
+def _canonical_volumes(raw: object) -> Optional[list[dict]]:
+    """The volume stack as the crop would read it, rounded for comparison.
+
+    Both sides go through `crop.parse_volumes`, so a stack stored by an older
+    build, or edited by hand into `settings_json`, is compared as the cut would
+    actually apply it rather than as it happens to be spelled. Returns None when
+    it would not parse at all — the panel says so instead of claiming staleness.
+    """
+    try:
+        return [
+            {
+                "kind": v.kind, "mode": v.mode,
+                "center": [round(c, 6) for c in v.center],
+                "half": [round(h, 6) for h in v.half],
+                "rotation": [round(r, 6) for r in v.rotation],
+            }
+            for v in crop.parse_volumes(raw)
+        ]
+    except crop.CropError:
+        return None
+
+
+@router.get("/{project_id}/crop")
+async def read_crop(project_id: str, session: Session = Depends(get_session)):
+    """What the crop pass last wrote, and whether it still matches the volumes.
+
+    The staleness answer is the point of this route. The volumes live in
+    `settings_json` and are edited by dragging a gizmo, which saves on a 300 ms
+    debounce like every other panel (§4) — so the moment a box moves, the file
+    under `train/crop/` describes a crop nobody asked for any more, and steps 5
+    and 6 would read it without knowing. Nothing here corrects that silently:
+    the panel is told, and re-running the pass is one click.
+
+    200 with nulls before the first run — the caller is a UI panel.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_path = PROJECTS_DIR / project.slug
+    train_dir = project_path / "train"
+
+    try:
+        stored = json.loads(project.settings_json or "{}")
+    except json.JSONDecodeError:
+        stored = {}
+    section = stored.get("crop") if isinstance(stored, dict) else None
+    wanted = _canonical_volumes((section or {}).get("volumes"))
+
+    result = step_crop.read_result(train_dir)
+    applied = _canonical_volumes((result or {}).get("volumes"))
+    cropped = step_crop.find_crop(train_dir)
+    source = find_splat(train_dir)
+
+    return {
+        "volumes": (section or {}).get("volumes") or [],
+        "valid": wanted is not None,
+        "max_volumes": crop.MAX_VOLUMES,
+        "source": {
+            "available": source is not None,
+            "file": source.name if source else None,
+            "count": splat_count(source),
+        },
+        "applied": result,
+        "cropped": cropped is not None,
+        # A crop the volumes have moved on from. Nothing downstream refuses it —
+        # it is a real file describing a real earlier cut — but every reader of
+        # it should be able to say so.
+        "stale": bool(cropped and wanted is not None and applied != wanted),
+    }
+
+
+@router.get("/{project_id}/export-splat")
+async def read_splat_export(project_id: str, session: Session = Depends(get_session)):
+    """The export drawer: what it holds, what it would write, and with what.
+
+    Three questions the panel cannot answer on its own, and the third is the
+    one this route exists for:
+
+    * **What is in `train/export/`** — a list of deliverables that accumulates,
+      one per format and per settings change, with a `/static` URL each. Nothing
+      in the pipeline reads them and nothing prunes them, so the panel is the
+      only place they are ever seen.
+    * **What the next export would read** — `resolve_splat`, so an export made
+      after a crop carries the crop, and its SH degree read off the file rather
+      than assumed, because that is what decides whether "SH 0" is a reduction
+      or a no-op.
+    * **Whether the compressed formats can be written at all.** `sog`, `spz` and
+      `compressed-ply` need `@playcanvas/splat-transform`, which is optional
+      (§7.6c). The panel greys them out and names the install command rather
+      than offering a button that fails after the reduction has already run.
+
+    …and a fourth that is really part of the second. **The crop the export will
+    honour is the one on disk, not the one in the viewer.** Volumes placed with
+    the gizmo and never applied, or applied and then dragged, leave
+    `resolve_splat` answering the *trained* splat while the user is looking at a
+    cut scene — so `crop` below carries the same `applied` / `stale` pair
+    `/crop` does, and the panel says which of the two files is about to be read.
+
+    200 with nulls before the first run — the caller is a UI panel.
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    slug = project.slug
+    project_path = PROJECTS_DIR / slug
+    train_dir = project_path / "train"
+
+    source, cropped = step_crop.resolve_splat(train_dir)
+    source_info: dict = {"available": source is not None}
+    if source is not None:
+        try:
+            header = ply.read_header(source)
+            source_info.update(
+                file=source.name,
+                cropped=cropped,
+                count=header.count,
+                bytes=source.stat().st_size,
+                sh_degree=splat_export.source_sh_degree(header),
+                properties=len(header.props),
+            )
+        except (ply.PlyError, OSError) as exc:
+            source_info["error"] = str(exc)
+
+    # The crop as the *pipeline* sees it, so the panel can tell "cut" from
+    # "a box is drawn on the preview". Same two comparisons `/crop` makes,
+    # through the same canonicaliser, so the two panels cannot disagree.
+    try:
+        stored = json.loads(project.settings_json or "{}")
+    except json.JSONDecodeError:
+        stored = {}
+    section = stored.get("crop") if isinstance(stored, dict) else None
+    wanted = _canonical_volumes((section or {}).get("volumes"))
+    crop_result = step_crop.read_result(train_dir)
+    crop_applied = _canonical_volumes((crop_result or {}).get("volumes"))
+
+    # The saved viewpoint (§7.6d). Reported through the same parser the export
+    # itself uses, so a stored value the run would refuse is refused here too
+    # rather than shown as saved and then quietly dropped from the file.
+    view_info: dict = {"saved": False, "valid": True, "error": None,
+                       "viewpoint": None}
+    try:
+        view = viewpoint.from_settings(stored)
+        if view is not None:
+            view_info.update(saved=True, viewpoint=view.as_dict())
+    except viewpoint.ViewpointError as exc:
+        view_info.update(saved=True, valid=False, error=str(exc))
+
+    tool = splat_transform.find_splat_transform()
+    return {
+        "source": source_info,
+        # Whether it lands in the header or in a sidecar is decided by the
+        # format, so the panel is told which formats can carry it.
+        "viewpoint": {
+            **view_info,
+            "header_formats": [splat_export.FORMAT_PLY],
+            "sidecar_suffix": viewpoint.SIDECAR_SUFFIX,
+        },
+        "crop": {
+            # Volumes the user has placed, whether or not they have been cut.
+            "volumes": len(wanted) if wanted is not None else 0,
+            # A cut file exists, so `resolve_splat` returns it and this export
+            # will read it.
+            "applied": cropped,
+            # It exists and the volumes have moved on since: the export is
+            # about to read a real file describing an earlier cut.
+            "stale": bool(cropped and wanted is not None and crop_applied != wanted),
+        },
+        "applied": step_splat_export.read_result(train_dir),
+        "files": [
+            {
+                "filename": f.name,
+                "bytes": f.stat().st_size,
+                "url": f"/static/{slug}/train/export/{f.name}",
+            }
+            for f in step_splat_export.list_exports(train_dir)
+        ],
+        "formats": {
+            "native": list(splat_export.NATIVE_FORMATS),
+            "external": list(splat_export.EXTERNAL_FORMATS),
+        },
+        "splat_transform": {
+            "available": tool is not None,
+            "path": str(tool) if tool else None,
+            "install_hint": splat_transform.INSTALL_HINT,
+        },
+    }
+
+
+@router.delete("/{project_id}/export-splat")
+async def clear_splat_exports(project_id: str, session: Session = Depends(get_session)):
+    """Empty `train/export/`.
+
+    The one destructive button on that panel, and it is deliberately all-or-
+    nothing: every file in there is a deliverable somebody asked for, so a
+    per-file delete would be a file manager and this is a "clear the drawer".
+    Nothing downstream can notice — no step reads this directory.
+    """
+    slug = get_slug_from_id(project_id, session)
+    removed = step_splat_export.clear_exports(PROJECTS_DIR / slug / "train")
+    return {"removed": removed}
 
 
 @router.get("/{project_id}/mesh")
@@ -386,11 +595,11 @@ async def delete_frames(
 
 @router.get("/{project_id}/export")
 async def list_export_files(project_id: str, session: Session = Depends(get_session)):
-    """What `export/` holds — the shared directory of steps 5 and 6 (§14.1).
+    """What `export/` holds — step 5's delivery drawer (§7.10, §14.1).
 
     `role` tells the splat from the mesh, because with `mesh --format ply` both
-    are a `.ply` and only the name says which is which: step 6 imports the
-    splat, and `mesh.ply` is not it (`step_export.find_export_splat`).
+    are a `.ply` and only the name says which is which
+    (`step_export.find_export_splat`).
     """
     slug = get_slug_from_id(project_id, session)
     export_dir = PROJECTS_DIR / slug / "export"
@@ -406,9 +615,9 @@ async def list_export_files(project_id: str, session: Session = Depends(get_sess
             return "splat"
         if path.suffix.lower() in mesh_suffixes:
             return "mesh"
-        # `scene.blend` and `README_SPLATFORGE.txt` — step 6's half of the
-        # directory, which a step 5 reset takes with it.
-        return "scene"
+        # Anything else a previous build left behind — the directory is step 5's
+        # and it only ever writes a splat and a mesh into it.
+        return "other"
 
     files = [
         {

@@ -49,7 +49,7 @@ export const RESETTABLE_STEPS = [2, 3, 4, 5, 6] as const;
 // progress name.
 export type StepName =
   | 'extract' | 'curate' | 'sfm' | 'masks'
-  | 'geometry' | 'train' | 'mesh' | 'export' | 'scene';
+  | 'geometry' | 'crop' | 'splat_export' | 'train' | 'mesh' | 'export';
 export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'aborted';
 export type LogLevel = 'INFO' | 'WARNING' | 'ERROR' | 'SUCCESS' | 'DEBUG';
 
@@ -380,8 +380,8 @@ export interface MeshFile {
   bytes: number;
   path?: string;
   url?: string;
-  /** `scene` is step 6's half of `export/` — scene.blend and its README. */
-  role?: 'splat' | 'mesh' | 'scene';
+  /** `other` is anything an older build left in `export/`. */
+  role?: 'splat' | 'mesh' | 'other';
 }
 
 /** `mesh/mesh_result.json` — four lines out of the run's 419, kept. */
@@ -422,15 +422,12 @@ export interface MeshInputState {
   has_model: boolean;
 }
 
-export interface ExportDefaults {
-  format: 'ply' | 'splat';
-  pattern: string;
-}
-
-export interface BlenderDefaults {
-  scene_scale: number;
-  import_mode: string;
-}
+/**
+ * The splat export section (CLAUDE.md §7.6c) — `SplatExportDefaults` below is
+ * the same shape, named for the pass that reads it. Kept as one alias rather
+ * than two declarations so `defaults.export` and the panel cannot drift.
+ */
+export type ExportDefaults = SplatExportDefaults;
 
 export interface ViewerDefaults {
   /** What the 3D preview opens at. 0 opens at full quality. */
@@ -702,7 +699,6 @@ export interface AppDefaults {
   train: TrainDefaults;
   mesh: MeshDefaults;
   export: ExportDefaults;
-  blender: BlenderDefaults;
   viewer: ViewerDefaults;
 }
 
@@ -982,4 +978,169 @@ export interface CamerasReport {
   aspect?: number | null;
   /** `sparse/N` count. More than one is a fragmented capture. */
   models?: number;
+}
+
+
+// ── The splat crop (CLAUDE.md §7.6b) ─────────────────────────────────────────
+// The volumes themselves are `CropVolume` in `components/viewer/cropVolumes.ts`,
+// beside the frame conversion that gives them meaning. What follows is only what
+// crosses the API.
+
+/** How the last crop pass went — `train/crop/crop_result.json`. */
+export interface CropRunResult {
+  generated_at: string;
+  source: string;
+  output: string;
+  volumes: unknown[];
+  source_count: number;
+  kept: number;
+  removed: number;
+  seconds: number;
+  bytes: number;
+}
+
+/** `GET /api/files/{id}/crop`. */
+export interface CropState {
+  volumes: unknown[];
+  /** False when the stored stack would not parse — the panel says so. */
+  valid: boolean;
+  max_volumes: number;
+  source: {
+    available: boolean;
+    file: string | null;
+    count: number | null;
+  };
+  applied: CropRunResult | null;
+  /** `train/crop/splat.ply` exists, so steps 5 and 6 are reading it. */
+  cropped: boolean;
+  /** It exists, and the volumes have moved on since it was written. */
+  stale: boolean;
+}
+
+// ── Splat export (CLAUDE.md §7.6c) ──────────────────────────────────────────
+
+/** The five formats the export pass can write. */
+export type SplatExportFormat = 'ply' | 'splat' | 'sog' | 'spz' | 'compressed-ply';
+
+/** How a target gaussian count chooses which ones to keep. */
+export type SplatExportSelection = 'importance' | 'uniform';
+
+/**
+ * What to export, and what to leave out of it.
+ *
+ * Layer 2/3 of §4's settings model, under `export`. Every field bar `format` is
+ * a *reduction* and every one of them ships off: the default export is the
+ * trained splat byte for byte. "Give me the file" is one setting, not a
+ * combination.
+ */
+export interface SplatExportDefaults {
+  format: SplatExportFormat;
+  /** Highest SH band to keep. `null` keeps whatever the trainer wrote. */
+  sh_degree: number | null;
+  /** Linear alpha floor, after the sigmoid. 0 keeps every gaussian. */
+  opacity_min: number;
+  /** Target gaussian count. 0 keeps every one that survives the floor. */
+  max_count: number;
+  selection: SplatExportSelection;
+  /** Inherited from step 5's `export/` naming; this pass does not use it. */
+  pattern: string;
+}
+
+/** How the last export run went — `train/export/export_result.json`. */
+export interface SplatExportResult {
+  generated_at: string;
+  source: string;
+  source_cropped: boolean;
+  source_sh_degree: number | null;
+  output: string;
+  filename: string;
+  source_count: number;
+  count: number;
+  removed: number;
+  bytes: number;
+  seconds: number;
+  /** The reduced PLY handed to splat-transform, for the compressed formats. */
+  intermediate_bytes?: number;
+  splat_transform_version: string | null;
+  plan: SplatExportDefaults;
+  /** The saved viewpoint this export carried, if there was one (§7.6d). */
+  viewpoint?: StoredViewpoint | null;
+  /** True when it went into the PLY header rather than into a sidecar. */
+  viewpoint_in_header?: boolean;
+  /** The `<name>.viewpoint.json` written beside it, when it was. */
+  viewpoint_sidecar?: string | null;
+}
+
+/**
+ * The saved camera of the splat preview, in the **dataset** frame (§7.6d).
+ *
+ * Stored under `viewpoint` in `settings_json` — layer 3 with no `defaults.json`
+ * counterpart, exactly like the crop volumes, because a camera parked in front
+ * of one scene is not a default another project could inherit.
+ */
+export interface StoredViewpoint {
+  position: [number, number, number];
+  target: [number, number, number];
+  up: [number, number, number];
+  fov_y: number;
+  flip_up: boolean;
+  saved_at: string | null;
+}
+
+/** One file in the export drawer. */
+export interface SplatExportFile {
+  filename: string;
+  bytes: number;
+  url: string;
+}
+
+/** `GET /api/files/{id}/export-splat`. */
+export interface SplatExportState {
+  source: {
+    available: boolean;
+    file?: string;
+    /** The export reads the crop when there is one, and says so. */
+    cropped?: boolean;
+    count?: number;
+    bytes?: number;
+    sh_degree?: number | null;
+    properties?: number;
+    error?: string;
+  };
+  /**
+   * The crop as the *pipeline* sees it, which is not always what the viewer
+   * shows: the live cut is a shader test on the preview, so volumes can be
+   * placed — and the scene can look trimmed — with nothing on disk cut at all.
+   */
+  crop: {
+    /** Volumes the user has placed, applied or not. */
+    volumes: number;
+    /** A cut file exists, so this export will read it. */
+    applied: boolean;
+    /** It exists, and the volumes have moved on since it was written. */
+    stale: boolean;
+  };
+  /**
+   * The saved viewpoint and how this export would carry it: inside the header
+   * for the formats in `header_formats`, in a `<name><sidecar_suffix>` beside
+   * the file for every other one (§7.6d).
+   */
+  viewpoint: {
+    saved: boolean;
+    /** False when what is stored would be refused by the run — the panel says so. */
+    valid: boolean;
+    error: string | null;
+    viewpoint: StoredViewpoint | null;
+    header_formats: SplatExportFormat[];
+    sidecar_suffix: string;
+  };
+  applied: SplatExportResult | null;
+  files: SplatExportFile[];
+  formats: { native: SplatExportFormat[]; external: SplatExportFormat[] };
+  /** The three compressed formats are written by an optional Node CLI. */
+  splat_transform: {
+    available: boolean;
+    path: string | null;
+    install_hint: string;
+  };
 }

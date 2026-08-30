@@ -126,7 +126,7 @@ const MeshReport: React.FC<{ result: MeshResult }> = ({ result }) => {
 };
 
 const Step5_Mesh: React.FC = () => {
-  const { currentProjectId, stepStatuses, setCurrentStep } = usePipelineStore();
+  const { currentProjectId, stepStatuses } = usePipelineStore();
   const { startPipeline } = usePipeline();
   const { defaults } = useDefaults();
 
@@ -238,9 +238,9 @@ const Step5_Mesh: React.FC = () => {
         <p className="flex gap-2 text-xs text-slate-400 border-t border-slate-700/60 pt-2">
           <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-cyan-500" />
           <span>
-            Step 5 also fills <span className="font-mono">export/</span>, which
-            it shares with step 6 — so re-running it clears the Blender scene as
-            well. The exported files are hard links, not copies.
+            Step 5 also fills <span className="font-mono">export/</span> with
+            the splat it meshed and the mesh it wrote — so re-running it clears
+            that too. The exported files are hard links, not copies.
           </span>
         </p>
       </div>
@@ -317,7 +317,7 @@ const Step5_Mesh: React.FC = () => {
       {exported.length > 0 && (
         <div className="rounded-lg bg-slate-800 border border-slate-700 px-4 py-3">
           <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">
-            export/ — what step 6 will import
+            export/ — the deliverables of this run
           </p>
           <ul className="space-y-1">
             {exported.map((f) => (
@@ -336,20 +336,16 @@ const Step5_Mesh: React.FC = () => {
         </div>
       )}
 
+      {/* Step 5 is the last step: there is nowhere to continue to, so the
+          hand-off button is replaced by what the run produced. */}
       {isDone && result && (
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-green-400 font-medium">
+        <div className="flex items-center gap-2 text-sm text-green-400 font-medium">
+          <CheckCircle className="w-4 h-4 shrink-0" />
+          <span>
             {result.faces !== undefined
-              ? `${result.faces.toLocaleString()} faces written`
-              : 'Mesh complete'}
+              ? `${result.faces.toLocaleString()} faces written — pipeline complete.`
+              : 'Mesh complete — pipeline complete.'}
           </span>
-          <Button
-            onClick={() => setCurrentStep(6)}
-            className="bg-green-700 hover:bg-green-600 text-white gap-1"
-          >
-            <CheckCircle className="w-4 h-4" />
-            Validate &amp; Continue to Scene
-          </Button>
         </div>
       )}
     </div>

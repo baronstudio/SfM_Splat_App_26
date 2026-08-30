@@ -95,7 +95,6 @@ def create_config_file():
             "rc_exe_path": None,
             "lfs_exe_path": None,
             "ffmpeg_path": "ffmpeg",
-            "blender_exe_path": None,
             "supersplat_url": "https://superspl.at/editor"
         }
     }
@@ -115,19 +114,6 @@ def create_config_file():
     config["tools"]["ffmpeg_path"] = ffmpeg_path if ffmpeg_path else "ffmpeg"
     if not ffmpeg_path:
         print("Warning: ffmpeg not found in PATH. Please install it or specify the path in config.json.")
-
-    # Auto-detect Blender
-    blender_search_paths = []
-    if os.name == 'nt':
-        blender_search_paths = ["C:/Program Files/Blender Foundation"]
-    elif sys.platform == 'darwin':
-         blender_search_paths = ["/Applications"]
-    
-    blender_exe = "blender.exe" if os.name == 'nt' else "blender"
-    blender_path = find_executable(blender_exe, blender_search_paths)
-    config["tools"]["blender_exe_path"] = blender_path
-    if not blender_path:
-        print("Warning: blender not found. Please specify the path manually in config.json.")
 
     with open("config.json", "w") as f:
         json.dump(config, f, indent=4)

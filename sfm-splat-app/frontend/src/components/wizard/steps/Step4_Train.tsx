@@ -15,6 +15,8 @@ import SceneViewer from '@/components/viewer/SceneViewer';
 import TrainSettings, { presetDefaults } from '@/components/settings/TrainSettings';
 import GeometrySettings from '@/components/settings/GeometrySettings';
 import SaveState from '@/components/settings/SaveState';
+import SplatExportPanel from '@/components/panels/SplatExportPanel';
+import { useSplatExport } from '@/hooks/useSplatExport';
 import client from '@/api/client';
 import type {
   GeometryDefaults, GeometryRunResult, TrainDefaults, TrainMetric, TrainResult,
@@ -213,6 +215,18 @@ const Step4_Train: React.FC = () => {
   const status = stepStatuses[4];
   const isRunning = status === 'running';
   const isDone = status === 'done';
+
+  // The deliverable export (CLAUDE.md §7.6c) — the fourth pass attached to this
+  // step, and the one whose output no later step reads. Enabled by there being
+  // a splat rather than by a toggle: it renders at the very bottom of the page,
+  // after the viewer and the crop panel inside it, because exporting is the
+  // last thing done to a run and it reads whatever the crop left behind.
+  //
+  // `status` is what re-reads it. The crop is a pass attached to this same step,
+  // so applying one takes step 4 through `running` and back
+  // (`_run_attached_pass`) — which is exactly the cue for this panel to notice
+  // that `resolve_splat` now answers `train/crop/splat.ply` and to say so.
+  const splatExport = useSplatExport(currentProjectId, Boolean(result || isDone), status);
 
   const refresh = useCallback(() => {
     if (!currentProjectId) return;
@@ -464,14 +478,45 @@ const Step4_Train: React.FC = () => {
 
       {/* The splat. 247 MB for a small project, so nothing here loads the source
           file: `core/ply.py` streams it into a decimated `.splat` under
-          preview/ and the viewer opens that (§7.9). */}
+          preview/ and the viewer opens that (§7.9).
+
+          `withCrop` is what puts the box/sphere volumes on it (§7.6b). It rides
+          here rather than on step 5 because the thing being cut is the trained
+          splat, and because the cut has to happen before the mesh is extracted
+          from it — but nothing about it re-trains: it is a pass of its own, like
+          the geometry one above.
+
+          `withViewpoint` is the toolbar's "Save view" (§7.6d): the camera this
+          scene is worth being seen from, stored in the dataset frame beside the
+          crop volumes and carried into — or beside — whatever the panel below
+          exports. It rides on this viewer for the crop's reason, which is that
+          this is where the splat is actually looked at. */}
       {(isDone || result) && currentProjectId && (
         <SceneViewer
           projectId={currentProjectId}
           source="train"
           refreshKey={status ?? 'idle'}
           withCameras
+          withCrop
+          withViewpoint
         />
+      )}
+
+      {/* The export, last on the page and deliberately so (§7.6c).
+          Everything above it produces the splat: the run, then the crop that
+          trims it inside the viewer. This is the only thing here that produces
+          a *file for somebody else*, it reads whatever those two left — the
+          crop when there is one, through `resolve_splat` — and nothing after it
+          reads what it writes. Putting it above the viewer, as it first was,
+          asked the user to choose an export format before they had seen the
+          scene or cut it. */}
+      {(isDone || result) && currentProjectId && (
+        <>
+          <SplatExportPanel tool={splatExport} disabled={isRunning} />
+          {splatExport.running && (
+            <ProgressBar step="splat_export" label="Reduce → write → convert" />
+          )}
+        </>
       )}
 
       {isDone && result && (

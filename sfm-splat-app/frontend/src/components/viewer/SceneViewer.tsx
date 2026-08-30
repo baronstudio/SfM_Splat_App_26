@@ -1,14 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Boxes, Camera, Download, FlipVertical2, Grid3x3, RefreshCw, RotateCcw, Route,
-  Maximize2, AlertTriangle,
+  Maximize2, AlertTriangle, Bookmark, BookmarkPlus, X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { staticUrl } from '@/api/client';
 import { useDefaults } from '@/hooks/useDefaults';
 import { useCameras, usePreview } from '@/hooks/usePreview';
+import { useCrop } from '@/hooks/useCrop';
+import { useViewpoint } from '@/hooks/useViewpoint';
+import CropPanel from '@/components/panels/CropPanel';
 import PointCloudCanvas from './PointCloudCanvas';
-import SplatCanvas from './SplatCanvas';
+import SplatCanvas, { type ViewpointApi } from './SplatCanvas';
+import { describeViewpoint, type Viewpoint } from './viewpoint';
 import MeshCanvas from './MeshCanvas';
 import type { PreviewSource } from '@/types';
 
@@ -40,6 +44,18 @@ interface SceneViewerProps {
   /** Offer the camera overlay. Off for steps where the poses say nothing new. */
   withCameras?: boolean;
   height?: number;
+  /**
+   * Offer the crop tool (CLAUDE.md §7.6b). Step 4 only, and only over a splat:
+   * the cut is defined on gaussian centres and written by a pass over
+   * `splat.ply`, so there is nothing for it to mean on a sparse cloud or a mesh.
+   */
+  withCrop?: boolean;
+  /**
+   * Offer "Save view" (CLAUDE.md §7.6d). Step 4 only, and only over a splat:
+   * what the saved camera is *for* is the export of that splat, which carries
+   * it in the PLY header or in a sidecar beside every other format.
+   */
+  withViewpoint?: boolean;
 }
 
 const LEVELS = [250_000, 1_000_000, 2_000_000];
@@ -59,6 +75,7 @@ function formatBytes(bytes: number): string {
 
 export const SceneViewer: React.FC<SceneViewerProps> = ({
   projectId, source, refreshKey, withCameras = true, height = 420,
+  withCrop = false, withViewpoint = false,
 }) => {
   const { defaults } = useDefaults();
   const viewerDefaults = defaults?.viewer;
@@ -131,7 +148,39 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
 
   const cameraPoses = cameras?.available ? cameras.cameras : null;
   const isSplat = state?.kind === 'splat';
+  // Hooks cannot be conditional, so the tool is always constructed and only
+  // *enabled* over a splat — `useCrop` fetches nothing when it is not.
+  const cropEnabled = withCrop && isSplat;
+  const crop = useCrop(projectId, cropEnabled, String(refreshKey ?? ''));
   const isMesh = state?.kind === 'mesh';
+
+  // The saved viewpoint (§7.6d). Same shape as the crop above it: always
+  // constructed, because hooks cannot be conditional, and only *enabled* over
+  // the splat this app has something to do with a camera for.
+  const viewpointEnabled = withViewpoint && isSplat;
+  const viewpointApi = useRef<ViewpointApi | null>(null);
+  const viewpoint = useViewpoint(projectId, viewpointEnabled);
+  // A restore that has to wait for the canvas to come back: restoring a view
+  // saved under the other vertical turns the scene over first, and that
+  // remounts the splat canvas (its scene rotation is read once, at load).
+  const [pendingView, setPendingView] = useState<Viewpoint | null>(null);
+
+  const saveView = () => {
+    const captured = viewpointApi.current?.capture();
+    if (captured) void viewpoint.save(captured);
+  };
+
+  const goToSavedView = () => {
+    const saved = viewpoint.viewpoint;
+    if (!saved) return;
+    if (saved.flip_up !== upFlipped) {
+      setPendingView(saved);
+      setUpFlipped(saved.flip_up);
+    } else {
+      viewpointApi.current?.restore(saved);
+    }
+  };
+
   const building = Boolean(state?.building);
   const canvasKey = `${state?.url ?? 'none'}#${viewNonce}`;
 
@@ -235,6 +284,43 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
           </label>
         )}
 
+        {viewpointEnabled && (
+          <div className="flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 p-0.5">
+            <button
+              onClick={saveView}
+              disabled={!state?.ready || viewpoint.saving}
+              className="px-2 py-1 text-xs rounded transition-colors inline-flex items-center
+                         gap-1 text-slate-400 hover:text-slate-100 disabled:opacity-40"
+              title="Store the camera as it is now. The export writes it into the PLY header, or beside the file in a .viewpoint.json for the formats that cannot carry it"
+            >
+              <BookmarkPlus className="w-3.5 h-3.5" />
+              {viewpoint.saving ? 'Saving…' : 'Save view'}
+            </button>
+            {viewpoint.viewpoint && (
+              <>
+                <button
+                  onClick={goToSavedView}
+                  className="px-2 py-1 text-xs rounded transition-colors inline-flex items-center
+                             gap-1 text-cyan-400 hover:text-cyan-300"
+                  title={`Go back to the saved view — ${describeViewpoint(viewpoint.viewpoint)}`}
+                >
+                  <Bookmark className="w-3.5 h-3.5" />
+                  Saved
+                </button>
+                <button
+                  onClick={() => void viewpoint.clear()}
+                  disabled={viewpoint.saving}
+                  className="px-1.5 py-1 text-xs rounded text-slate-500 hover:text-red-400
+                             transition-colors disabled:opacity-40"
+                  title="Forget the saved view. The next export carries no camera"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         <div className="flex-1" />
 
         <Button
@@ -333,6 +419,20 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
             flipUp={upFlipped}
             fovX={cameras?.fov_x}
             aspect={cameras?.aspect}
+            crop={cropEnabled ? {
+              volumes: crop.volumes,
+              selectedId: crop.selectedId,
+              gizmoMode: crop.gizmoMode,
+              showVolumes: crop.showVolumes,
+              livePreview: crop.livePreview,
+              onChange: crop.update,
+              onSelect: crop.select,
+              onLiveSupport: crop.setLiveSupported,
+            } : null}
+            onBounds={crop.setBounds}
+            viewpointApi={viewpointApi}
+            restoreOnLoad={pendingView}
+            onRestored={() => setPendingView(null)}
             onProgress={(percent) => setLoadPercent(percent)}
             onLoaded={() => setLoadPercent(null)}
             onError={setLoadError}
@@ -372,6 +472,30 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
         )}
       </div>
 
+      {cropEnabled && (
+        <CropPanel
+          volumes={crop.volumes}
+          selectedId={crop.selectedId}
+          gizmoMode={crop.gizmoMode}
+          showVolumes={crop.showVolumes}
+          livePreview={crop.livePreview}
+          liveSupported={crop.liveSupported}
+          state={crop.state}
+          dirty={crop.dirty}
+          running={crop.running}
+          error={crop.error}
+          onSelect={crop.select}
+          onAdd={(kind, mode) => crop.add(kind, mode, upFlipped)}
+          onUpdate={crop.update}
+          onRemove={crop.remove}
+          onClear={crop.clear}
+          onGizmoMode={crop.setGizmoMode}
+          onShowVolumes={crop.setShowVolumes}
+          onLivePreview={crop.setLivePreview}
+          onApply={crop.apply}
+        />
+      )}
+
       {/* Footer */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
         <span className="text-slate-400">
@@ -405,6 +529,14 @@ export const SceneViewer: React.FC<SceneViewerProps> = ({
           <span className="text-slate-600">
             Decimated for display — “Full” loads every point.
           </span>
+        )}
+        {viewpointEnabled && viewpoint.viewpoint && (
+          <span className="text-cyan-500/80" title="Dataset frame — the frame spirula wrote">
+            View saved: {describeViewpoint(viewpoint.viewpoint)}
+          </span>
+        )}
+        {viewpointEnabled && viewpoint.error && (
+          <span className="text-red-400">{viewpoint.error}</span>
         )}
       </div>
 

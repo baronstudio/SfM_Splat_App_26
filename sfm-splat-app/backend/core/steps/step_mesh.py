@@ -8,11 +8,12 @@ One command turns the trained splat into a surface (CLAUDE.md §7.8):
 `<checkpoint>` may be a run directory, a `*.ckpt` directory or a `splat.ply`;
 this step passes the **splat.ply** it located itself, for the same reason step 4
 globs its checkpoint rather than assuming one (§7.6): the file is the thing that
-exists, and `find_splat` has already proved it is non-empty. `--data` gives the
+exists, and `resolve_splat` has already proved it is non-empty - and it is what
+prefers `train/crop/splat.ply` when a crop was applied (§7.6b). `--data` gives the
 cameras that decide occupancy and colour, and it is the same `sfm/` step 4
 trained against.
 
-Three things here are not the obvious implementation:
+Four things here are not the obvious implementation:
 
 * **`--output` is not optional.** Its default is `<checkpoint>/mesh`, and
   `<checkpoint>` resolves to the `.ckpt` **directory** — measured, a run given
@@ -26,6 +27,18 @@ Three things here are not the obvious implementation:
   meshes` and exited **1 having written nothing at all — not even the glb it
   could have made**. So the refusal is checked before the run rather than
   reported after it.
+
+* **The images are junctioned into the dataset for the length of the run.**
+  `mesh` reads them through `<dataset>/images/<name>` and has no
+  `--image-dir`, exactly like `geometry` (§7.5) — measured 2026-08-30, a run
+  whose checkpoint was the crop's `train/crop/splat.ply` died on
+  `ColmapParser: ...sfm/images/frame_0001.jpg does not exist` at **exit 1**
+  having written nothing. A checkpoint under `train/run/` escapes that only
+  because the tool reads the `image_dir` recorded in the run's own
+  `config.json`, which is why step 5 worked before the crop existed and
+  failed on every cropped project after it. `ImageJunction` is shared with
+  the geometry pass and removed in `__exit__`, so §5's layout on disk is
+  unchanged and there is still one copy of the frames.
 
 * **86 % of the log is one counter line.** The three camera loops —
   `occupancy`, `texel density` and `color` — print `cameras rendered: N/total`
@@ -44,16 +57,18 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from backend.core import colmap
+from backend.core.dataset_images import ImageJunction
 from backend.core.defaults import MeshDefaults, load_defaults
 from backend.core.proc import ProcessAborted, iter_lines, release, spawn
 from backend.core.project_ops import reset_steps
-from backend.core.steps import spirula
-from backend.core.steps.step_train import find_splat
+from backend.core.steps import spirula, step_train
+from backend.core.steps.step_crop import resolve_splat
 
 # ── The tagged stdout channel (§7.8) ─────────────────────────────────────────
 #
@@ -294,19 +309,10 @@ def _phase_progress(tag: str, detail: str, state: dict) -> Optional[float]:
 async def _clear_previous_run(project_path: Path, broadcast_fn) -> None:
     """Reset step 5 — after the exe and the checkpoint are located, never before.
 
-    §14.1: locate the tool and the input first, delete second. Steps 5 and 6
-    share `export/`, so this takes the Blender scene with it and says so — that
-    is the documented meaning of resetting step 5, not a surprise.
+    §14.1: locate the tool and the input first, delete second. Step 5 owns
+    `export/` as well as `mesh/`, so this clears both — that is the documented
+    meaning of resetting step 5, not a surprise.
     """
-    scene = project_path / "export" / "scene.blend"
-    if scene.is_file():
-        await broadcast_fn(
-            "mesh", "WARNING",
-            "[mesh] This re-run also clears export/, which is where step 6 put "
-            "scene.blend — the two steps share the directory (§14.1). Re-run "
-            "step 6 afterwards.",
-        )
-
     removed = reset_steps(project_path, [5])
     if removed:
         await broadcast_fn(
@@ -355,11 +361,22 @@ async def run_mesh(project_path: Path, broadcast_fn, settings: dict) -> dict:
     await broadcast_fn("mesh", "INFO", f"[mesh] spirula {version}", progress=0.0)
 
     train_dir = project_path / "train"
-    checkpoint = find_splat(train_dir)
+    checkpoint, cropped = resolve_splat(train_dir)
     if checkpoint is None:
         raise FileNotFoundError(
             f"No trained splat under {train_dir}. Run step 4 first — the mesh "
             "is extracted from the gaussians, not from the sparse model."
+        )
+
+    if cropped:
+        # A mesh of 700 000 gaussians and a mesh of the 300 000 that survived a
+        # crop are the same command line and very different results, so the run
+        # names its own input (CLAUDE.md 7.6b). `mesh_result.json` keeps the
+        # path too, and deleting `train/crop/` is what meshes the full splat.
+        await broadcast_fn(
+            "mesh", "INFO",
+            f"[mesh] cropped splat: {checkpoint.relative_to(project_path)}, "
+            f"{step_train.splat_count(checkpoint) or '?'} gaussians",
         )
 
     dataset_dir: Optional[Path] = project_path / "sfm"
@@ -407,85 +424,110 @@ async def run_mesh(project_path: Path, broadcast_fn, settings: dict) -> dict:
     )
 
     loop = asyncio.get_running_loop()
-    proc = spawn(cmd, project_path, cwd=str(project_path))
+    # `mesh` resolves `<dataset>\images\<name>` exactly as `geometry` does,
+    # and has no `--image-dir` either — `mesh --help` lists none, whatever the
+    # parser's own "set --image-dir if needed" says. Measured 2026-08-30: the
+    # crop's `train/crop/splat.ply` died on `ColmapParser: <project>\sfm\images\
+    # frame_0001.jpg does not exist` at **exit 1**, having written nothing. A
+    # checkpoint under `train/run/` escapes it only because the tool reads the
+    # `image_dir` recorded in that run's own `config.json`, which is why step 5
+    # worked before the crop existed and not after it. So the same junction
+    # step 4's geometry pass uses, for the length of this command and no longer
+    # (§7.5, §7.8).
+    frames_dir = project_path / "frames"
+    images = ExitStack()
+    with images:
+        if dataset_dir is not None and frames_dir.is_dir():
+            junction = images.enter_context(
+                ImageJunction(dataset_dir, frames_dir))
+            await broadcast_fn(
+                "mesh", "INFO",
+                f"[mesh] {junction.link.name}/ linked to frames/ for the length "
+                "of this run: `mesh` reads the images through the dataset folder "
+                "and has no --image-dir. Removed again when it finishes — there "
+                "is still only one copy of the frames on disk (§5.2).",
+                progress=_P_START,
+            )
 
-    tail: list[str] = []
-    parsed: dict[str, Any] = {}
-    written: list[str] = []
-    state: dict[str, Any] = {"progress": _P_START}
+        proc = spawn(cmd, project_path, cwd=str(project_path))
 
-    try:
-        async for line in iter_lines(proc, loop):
-            match = _TAGGED.match(line)
-            tag = match.group(1).strip().lower() if match else None
-            detail = match.group(2).strip() if match else line.strip()
+        tail: list[str] = []
+        parsed: dict[str, Any] = {}
+        written: list[str] = []
+        state: dict[str, Any] = {"progress": _P_START}
 
-            counter = _CAMERA_COUNTER.match(detail) if match else None
-            progress = _phase_progress(tag, detail, state) if tag else None
+        try:
+            async for line in iter_lines(proc, loop):
+                match = _TAGGED.match(line)
+                tag = match.group(1).strip().lower() if match else None
+                detail = match.group(2).strip() if match else line.strip()
 
-            # 360 of the reference run's 419 lines were this counter, against a
-            # 500-line LiveLog. Only the end of each block survives; the rest
-            # ride the bar with no text, which `broadcast` omits from the
-            # payload and the store therefore never logs.
-            if counter and counter.group(1) != counter.group(2):
-                await broadcast_fn("mesh", "INFO", "", progress=progress)
-                continue
+                counter = _CAMERA_COUNTER.match(detail) if match else None
+                progress = _phase_progress(tag, detail, state) if tag else None
 
-            tail.append(line)
-            del tail[:-40]
-            await broadcast_fn("mesh", _classify(line), line, progress=progress)
+                # 360 of the reference run's 419 lines were this counter, against a
+                # 500-line LiveLog. Only the end of each block survives; the rest
+                # ride the bar with no text, which `broadcast` omits from the
+                # payload and the store therefore never logs.
+                if counter and counter.group(1) != counter.group(2):
+                    await broadcast_fn("mesh", "INFO", "", progress=progress)
+                    continue
 
-            if tag == "loading":
-                found = _GAUSSIANS.match(detail)
-                if found:
-                    parsed["gaussians"] = int(found.group(1))
-                found = _CAMERAS_USED.search(detail)
-                if found:
-                    parsed["cameras_used"] = int(found.group(1))
-                    parsed["cameras_available"] = int(found.group(2))
-            elif tag == "uv":
-                found = _TEXTURE_CHOSEN.search(detail)
-                if found:
-                    parsed["texture_size"] = int(found.group(1))
-            elif tag == "bake":
-                found = _TEXTURE_FINISHED.search(detail)
-                if found:
-                    parsed["texture_size"] = int(found.group(1))
-                found = _COVERED_TEXELS.search(detail)
-                if found:
-                    parsed["texels_covered"] = int(found.group(1))
-                    parsed["texels_total"] = int(found.group(2))
-                    parsed["texel_coverage_pct"] = float(found.group(3))
-            elif tag == "stats":
-                found = _VERTS_FACES.search(detail)
-                if found:
-                    parsed["vertices"] = int(found.group(1))
-                    parsed["faces"] = int(found.group(2))
-                for key, pattern in (
-                    ("components", _COMPONENTS),
-                    ("boundary_edges", _BOUNDARY_EDGES),
-                    ("non_manifold_edges", _NON_MANIFOLD_EDGES),
-                    ("mis_oriented_edges", _MIS_ORIENTED_EDGES),
-                ):
-                    found = pattern.search(detail)
+                tail.append(line)
+                del tail[:-40]
+                await broadcast_fn("mesh", _classify(line), line, progress=progress)
+
+                if tag == "loading":
+                    found = _GAUSSIANS.match(detail)
                     if found:
-                        parsed[key] = int(found.group(1))
-            elif tag == "wrote":
-                found = _WROTE.match(detail)
-                if found:
-                    written.append(found.group(1).strip())
-            elif tag == "done":
-                found = _VERTS_FACES.search(detail)
-                if found:
-                    parsed["vertices"] = int(found.group(1))
-                    parsed["faces"] = int(found.group(2))
-                found = _DONE_TOTAL.search(detail)
-                if found:
-                    parsed["elapsed_s"] = float(found.group(1))
+                        parsed["gaussians"] = int(found.group(1))
+                    found = _CAMERAS_USED.search(detail)
+                    if found:
+                        parsed["cameras_used"] = int(found.group(1))
+                        parsed["cameras_available"] = int(found.group(2))
+                elif tag == "uv":
+                    found = _TEXTURE_CHOSEN.search(detail)
+                    if found:
+                        parsed["texture_size"] = int(found.group(1))
+                elif tag == "bake":
+                    found = _TEXTURE_FINISHED.search(detail)
+                    if found:
+                        parsed["texture_size"] = int(found.group(1))
+                    found = _COVERED_TEXELS.search(detail)
+                    if found:
+                        parsed["texels_covered"] = int(found.group(1))
+                        parsed["texels_total"] = int(found.group(2))
+                        parsed["texel_coverage_pct"] = float(found.group(3))
+                elif tag == "stats":
+                    found = _VERTS_FACES.search(detail)
+                    if found:
+                        parsed["vertices"] = int(found.group(1))
+                        parsed["faces"] = int(found.group(2))
+                    for key, pattern in (
+                        ("components", _COMPONENTS),
+                        ("boundary_edges", _BOUNDARY_EDGES),
+                        ("non_manifold_edges", _NON_MANIFOLD_EDGES),
+                        ("mis_oriented_edges", _MIS_ORIENTED_EDGES),
+                    ):
+                        found = pattern.search(detail)
+                        if found:
+                            parsed[key] = int(found.group(1))
+                elif tag == "wrote":
+                    found = _WROTE.match(detail)
+                    if found:
+                        written.append(found.group(1).strip())
+                elif tag == "done":
+                    found = _VERTS_FACES.search(detail)
+                    if found:
+                        parsed["vertices"] = int(found.group(1))
+                        parsed["faces"] = int(found.group(2))
+                    found = _DONE_TOTAL.search(detail)
+                    if found:
+                        parsed["elapsed_s"] = float(found.group(1))
 
-        returncode = await loop.run_in_executor(None, proc.wait)
-    finally:
-        killed = release(project_path, proc)
+            returncode = await loop.run_in_executor(None, proc.wait)
+        finally:
+            killed = release(project_path, proc)
 
     if killed:
         raise ProcessAborted("The meshing was stopped by the user.")

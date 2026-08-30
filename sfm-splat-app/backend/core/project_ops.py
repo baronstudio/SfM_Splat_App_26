@@ -52,14 +52,13 @@ PROJECT_SUBDIRS = (
 # reconstruction registered — but it means a re-alignment costs the geometry
 # pass too, and `step_sfm` says so by name before it deletes them.
 #
-# Steps 5 and 6 share `export/` — 5 fills it, 6 adds the Blender scene to it —
-# so resetting 5 necessarily invalidates 6 as well.
+# Step 5 owns both `mesh/` and `export/`: it meshes, then fills the export
+# drawer from step 4's splat and its own mesh (§7.10).
 STEP_ARTEFACTS: dict[int, tuple[tuple[str, ...], tuple[str, ...]]] = {
     2: (("frames", "masks", "analysis", "report"), ()),
     3: (("sfm",), ()),
     4: (("train",), ()),
     5: (("mesh", "export"), ()),
-    6: ((), ("export/scene.blend", "export/README_SPLATFORGE.txt")),
 }
 
 RESETTABLE_STEPS = tuple(sorted(STEP_ARTEFACTS))

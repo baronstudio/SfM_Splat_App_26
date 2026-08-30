@@ -1,8 +1,8 @@
 # CLAUDE.md — SfM Splat Pipeline App
 
 > Local-first web app that drives a full video/photos → SfM → 3D Gaussian Splatting →
-> mesh → Blender scene pipeline on **one external binary plus FFmpeg**: import, extract
-> and curate frames, align, train, mesh, assemble the Blender scene.
+> mesh pipeline on **one external binary plus FFmpeg**: import, extract and curate
+> frames, align, train, mesh, deliver.
 >
 > Owner: JB (baronstudio). Single user, Windows workstation, local GPU.
 >
@@ -15,12 +15,12 @@
 
 ## 1. What this app is
 
-A 6-step wizard (React) driving a FastAPI backend that orchestrates local binaries as
+A 5-step wizard (React) driving a FastAPI backend that orchestrates local binaries as
 subprocesses:
 
 ```
-video/images ─> [2] extract+curate ─> [3] SfM ─> [4] train ─> [5] mesh ─> [6] export+scene
-                    FFmpeg (ours)      spirula   spirula      spirula     Blender
+video/images ─> [2] extract+curate ─> [3] SfM ─> [4] train ─> [5] mesh+export
+                    FFmpeg (ours)      spirula   spirula      spirula
 ```
 
 The single reconstruction tool is **Spirula Studio** (`spirula.exe`,
@@ -54,7 +54,12 @@ assume a rectilinear frame, and §7.4's shape masking exists for the lens border
 - **No VPS / remote deployment.** Local GPU, local binaries. Only hygiene kept: no
   hardcoded `localhost` in the frontend API client — it talks to its own origin
   (`3DGS_App_26`, 2026-08-22).
-- No 3D *editor*. The viewer looks, it never writes.
+- No 3D *editor*. The viewer looks, it never writes — and the **crop tool of §7.6b
+  is the one amendment to that, not a breach of it**: the viewer places the volumes
+  and shows the cut live, a backend pass makes it, and what it makes is a second
+  file beside the trained splat. The one place in this app that removes
+  reconstructed data is `core/crop.py`, it is always reversible by deleting one
+  directory, and nothing in the viewer writes a byte.
 - **We do not use `spirula sam extract`**, although it exists and writes the sharpest
   frames of a video. Step 2 is ours: it carries a measured `-hwaccel` (5×), the `scdet`
   cut capture riding along with the extraction, and the whole curation model. Handing
@@ -102,7 +107,6 @@ assume a rectilinear frame, and §7.4's shape masking exists for the lens border
 | Video | FFmpeg + ffprobe (system exe, subprocess) | Path in `config.json` |
 | Curation | OpenCV (Tenengrad, ORB) + NumPy + PySceneDetect | Inherited whole |
 | SfM / training / meshing / masking / geometry | **spirula.exe**, one binary, six tools | `step_sfm.py`, `step_train.py`, `step_mesh.py`, `step_sam.py`, `step_geometry.py` |
-| Scene | Blender + `blender_splatforge.py` | `step_scene.py` |
 | Frontend | React 18 + TS, Vite, Tailwind v4, shadcn/ui, Zustand, recharts | `frontend/` |
 | Viewer | `three` + `@mkkellogg/gaussian-splats-3d` | §7.8 |
 | Run | `start.bat` (Windows) / `start.sh` | Not a Makefile — this is a Windows-first app |
@@ -133,9 +137,24 @@ propagating to existing projects. The panels PATCH a **diff** (`deepDiff`), debo
 Save button, because a panel that must be saved is a panel that gets lost
 (`3DGS_App_26`, 2026-08-24).
 
-`SECTIONS` is `extract, curate, sfm, sam, geometry, train, mesh, export, blender, viewer`.
+**`settings_json.crop` and `settings_json.viewpoint` are the two exceptions, and
+both are deliberate.** The crop volumes (§7.6b) and the saved camera (§7.6d) are
+stored there with no `defaults.json` counterpart, because a box placed around
+*this* scene — or a camera parked in front of it — is not a default anything could
+inherit. They live in the settings blob rather than under `train/` so they
+**outlive a step 4 reset**, which correctly takes the cut file with it but has no
+business discarding where the user put the box or which way they aimed the view:
+the frame both are expressed in comes from the sparse model, which a re-train does
+not touch.
 
-The setup panel is opened by the **gear icon in the WizardShell top bar**.
+`SECTIONS` is `extract, curate, sfm, sam, geometry, train, mesh, export, viewer`.
+
+The setup panel is opened by the **gear icon in the WizardShell top bar**, and it
+carries two more sections that are not `defaults.json` sections at all, because
+neither is a business default: **Tools** is layer 1 above, and **Checkpoints**
+(§7.4b) is the neural weights installed on this machine. Both are properties of
+the installation, which is why they are here and not on a wizard step — asking
+for a checkpoint from inside step 3 would ask the same question once per project.
 
 ---
 
@@ -148,17 +167,20 @@ sfm-splat-app/
 ├── pipeline.db                 # SQLite: project registry only
 ├── backend/
 │   ├── main.py                 # FastAPI app, routers, /static mount
-│   ├── api/routes/             # projects, pipeline, settings, defaults, files
+│   ├── api/routes/             # projects, pipeline, settings, defaults, files, models
 │   ├── api/websocket.py        # broadcast bus
 │   ├── api/file_handles.py     # the AsyncFile close fix (§7.8)
 │   ├── core/config.py          # config.json  (AppConfig singleton)
 │   ├── core/defaults.py        # defaults.json (AppDefaults) + fps resolver
+│   ├── core/models_catalog.py  # the 12 checkpoints, read out of spirula.exe (§7.4b)
+│   ├── core/model_store.py     # install / resume / verify / remove them
 │   ├── core/proc.py            # spawn / iter_lines / kill_tree  (§15.1)
+│   ├── core/dataset_images.py  # <dataset>/images → frames/, for one run (§7.5, §7.8)
 │   ├── core/probe.py           # ffprobe wrapper (pure)
 │   ├── core/pipeline_runner.py # orchestrator, abort
 │   ├── core/steps/             # step_extract, step_conform, step_analyze,
 │   │                           #   step_sfm, step_train, step_mesh,
-│   │                           #   step_sam, step_geometry, step_export, step_scene
+│   │                           #   step_sam, step_geometry, step_export
 │   └── core/curate/            # sharpness, scenes, overlap, select  (pure, no FastAPI)
 ├── frontend/src/…
 ├── tools/spirula/spirula.exe   # ⚙ vendored, gitignored (119 MB, §5.1)
@@ -180,11 +202,21 @@ sfm-splat-app/
     │   ├── sfm_result.json    #   exit code, registered/total, reprojection error
     │   └── geometry_result.json # how the last `spirula geometry` run went (§7.5)
     ├── train/                  # step 4 — `--output-dir-prefix`
-    │   └── run/               #   `--output-dir-name`: config.json + step-%09d.ckpt/
+    │   ├── run/               #   `--output-dir-name`: config.json + step-%09d.ckpt/
+    │   ├── crop/              #   ⭑ the volume cut (§7.6b): splat.ply + crop_result.json.
+    │   │                      #     Beside the trained splat, never over it; step 5
+    │   │                      #     prefers it through `resolve_splat`
+    │   └── export/            #   ⭑ the deliverable drawer (§7.6c): reduced copies in
+    │                          #     five formats + export_result.json, plus a
+    │                          #     <name>.viewpoint.json beside every format that
+    │                          #     cannot carry the saved camera in a header (§7.6d).
+    │                          #     **Nothing in the pipeline reads it** — never named
+    │                          #     splat.ply, and invisible to `resolve_splat` and
+    │                          #     `find_export_splat`
     ├── mesh/                   # step 5 — `--output` (§7.8: never left to default):
     │                          #   mesh.glb / .ply / .obj / .gltf + mesh_result.json
-    ├── export/                 # steps 5 and 6 share it: splat.ply + mesh.* (hard links,
-    │                          #   §7.10), then step 6's scene.blend + README
+    ├── export/                 # step 5's delivery drawer: splat.ply + mesh.*
+    │                          #   (hard links, §7.10)
     └── preview/                # ⚙ generated: browser-sized copies for the viewer,
         └── sources/           #   plus poster frames and cached ffprobe. Cache.
 ```
@@ -267,9 +299,13 @@ Three more properties of the layout, each read off the tool rather than chosen:
   a wrong `--mask-dir` exits 0 and trains unmasked**, because `--load-masks` is documented
   "use the dataset's masks when they exist" — so step 4 logs the mask count.
 
-- **`geometry` is the exception to all of this.** It has no `--image-dir` at all and
-  resolves `<dataset>\images\<name>`, which §7.5 measures and works around with a
-  junction that lives only for the length of the run.
+- **`geometry` and `mesh` are the exception to all of this.** Neither has an
+  `--image-dir` at all and both resolve `<dataset>\images\<name>`, which §7.5 and
+  §7.8 measure and work around with the same junction, living only for the length
+  of the run. `mesh` hid it until the crop shipped: handed a checkpoint *inside*
+  `train/run/`, it reads the `image_dir` recorded in that run's own `config.json`
+  and never consults the dataset — and `train/crop/splat.ply` has no `config.json`
+  above it.
 
 ---
 
@@ -640,6 +676,88 @@ Section 5 says `masks/` holds one greyscale PNG per frame, and it is a directory
 `sfm auto` and `train` are pointed at; a report file in it would contradict the layout the
 readers are reading. Both go with a step 2 reset, so nothing is orphaned.
 
+### 7.4b The checkpoint manager — Setup → Checkpoints
+
+`spirula.exe` is 119 MB of tools and **not one gram of weights** (§5.1). Two of the
+six tools want a checkpoint and they behave differently, both badly for an app
+driving them:
+
+* **`sam track --model` takes a file and never fetches one.** Before this, the
+  mask panel's own hint read *"the .pt / .onnx file you downloaded"* — the user
+  had to find a checkpoint on the web, know which of six they wanted, and paste
+  an absolute path.
+* **`geometry --model` fetches a known id *mid-run*** — 419.4 MB through a `curl`
+  child, on the machine's first geometry pass, behind the one CR-redrawn bar in
+  this tool family (§7.5) and with an unaudited-licence WARNING going past in the
+  log.
+
+So installing a checkpoint is a **global setup concern**, drawn beside the tool
+paths and never on a wizard step: it is a property of this machine, like where
+FFmpeg is, and asking for it from inside step 3 asks the same question once per
+project. The step panels keep their `--model` fields; this is where the file they
+name comes from.
+
+**The catalogue is read out of the installed binary, not off a web page.**
+`spirula.exe` carries, for every checkpoint it knows, the local filename, the URL
+and — for the geometry models — a sha256, as three null-terminated strings in a
+row. That is the tool's own integrity registry, and using it is what makes a file
+this app installs indistinguishable from one spirula fetched itself. Proven
+rather than assumed: the `moge2-vitb-normal.onnx` a real `geometry` run had
+already downloaded hashes to `bbf14e07…f35a21` over 419 411 850 bytes, **exactly**
+the value compiled into the exe. Twelve rows, and every `size_bytes` is
+`X-Linked-Size` off a live HEAD against its own URL (2026-08-30), so the panel
+states a real download size before it fetches anything:
+
+| Family | Rows | Sizes |
+|---|---|---|
+| `sam` — `sam track --model <file>` | `sam3-q4_0`, `sam3-f16`, `sam2.1-{large,base-plus,small,tiny}` | 79.3 MB → 1.84 GB |
+| `geometry` — `geometry --model <id\|file>` | `moge2-{vits,vitb,vitl}`, `metric3d-vit-{small,large,giant2}` | 75.8 MB → 2.76 GB |
+
+**Where they go is spirula's own model directory, and that is the whole interop
+argument** — `%LOCALAPPDATA%\spirula-studio\models\`, measured off a real run's
+`[moge] saved …` line. **No environment variable moves it**: the binary's own list
+is `SS_LANG, SS_VK_DEVICE, SS_NO_AUTO_FETCH, SS_NN_LOG…` and none of them names a
+model directory. So a checkpoint installed under the manifest's own name is one
+the tool finds by itself with no flag — and `/use` additionally writes the
+**absolute path** into `defaults.json`, which works whether or not the cache sits
+where the tool would look. That is also what stops the mid-run fetch: a
+`geometry` handed a path never opens the network.
+
+Four things it does that a browser download into `Downloads/` does not:
+
+- **It resumes, and it resumes the tool's own leftovers.** Measured 2026-08-30,
+  HuggingFace answers `206 Partial Content` with `Accept-Ranges: bytes`. The
+  partial is `<name>.part`, which is **spirula's own convention** — its aborted
+  `moge2-vitl` fetch had left exactly that file, 1 232 896 bytes, in the cache —
+  so a part written by either side is finished by the other. Watched end to end:
+  that 1.2 MB part grew to 22 204 416, Cancel left it at 22 204 416, and the next
+  Download **resumed at 22 204 416 rather than 0**.
+- **It verifies before it installs, and never renames a bad file into place.**
+  The geometry rows carry the binary's sha256; the SAM rows carry none, so the
+  byte count is the check. A file that fails is kept as `.part` and named — a
+  truncated checkpoint that loads is worse than one that is missing. The verified
+  part is moved onto the final name with `os.replace`, atomic on one volume, so
+  no reader ever sees a half file under the name the tool looks up.
+- **Four licences, accepted separately** (§10). SAM 2.1's Apache-2.0 says nothing
+  about SAM 3's bespoke Meta licence, and a single "I agree" spanning both would
+  answer the harder question by accident. The Download button is dead until the
+  matching switch is on **and the route re-checks it**, so the gate cannot be
+  walked past by calling the API. The unaudited row says so in amber rather than
+  wearing a green tick.
+- **Manual install is a path, not an upload** — §6.7's argument one feature
+  along: the app runs on the workstation that holds the file, so a 2 GB
+  checkpoint already on this disk is a local copy. It is checked against the
+  manifest *before* it is installed, because a hand-downloaded file is the one
+  most likely to be the wrong one and the manifest is what can tell.
+
+**One at a time, refused rather than queued** (§2.5) — two 2 GB fetches over one
+link finish no sooner for overlapping — and **start-and-poll rather than the WS
+bus**, mirroring `/preview`: the bus carries no project id (§13.7) and every
+consumer maps a step name onto the open project's bar, so a download belonging to
+no project must not move one. Measured whole: `sam2.1-tiny`, 79 320 544 bytes in
+**14.2 s**, verified, installed, and `/use` writing both the path and the licence
+that was accepted for it into `defaults.json`.
+
 ### 7.5 Geometry supervision — `spirula geometry` (a panel on step 4)
 
 Per-image depth and normal maps feeding the trainer's geometry terms. Not a step: it
@@ -793,6 +911,328 @@ at one that is not there.
 to the predecessor's Reconstruction Region — the *idea* survives, the implementation
 shares nothing.
 
+### 7.6b The crop — box and sphere volumes over the trained splat
+
+A training run reconstructs everything the cameras saw, which on a real capture is
+the subject *and* the room behind it, the operator's feet, and a halo of
+low-opacity floaters where the frustums stop overlapping. None of that is a defect
+of the run and none of it belongs in the mesh step 5 extracts. The crop is how it
+goes.
+
+**It is a pass, not a step**, the third of the shape `sam` and `geometry` already
+have (§7.4, §7.5): re-runnable on its own, attached to wizard step 4, and it never
+marks that step anything. Same argument as everywhere else — a 30 000-iteration run
+measured **956 s** and the crop after it measures **0.46 s**, so tying them
+together would make moving a box cost sixteen minutes.
+
+**The cut writes beside, never over**, and that is the whole safety argument:
+`train/crop/splat.ply` next to `train/run/step-*.ckpt/splat.ply`. It buys four
+things for one duplicated file — a crop is undone by deleting one directory; a
+re-crop starts from the trained splat, so dragging a volume back out restores what
+it excluded; the two files cannot be confused, because `find_splat` only ever finds
+the trained one and `find_crop` only ever finds the cut one; and a step 4 reset
+takes the crop with it, correctly, since the splat it was cut from has just gone.
+`step_crop.resolve_splat` is the single place that chooses, **and both readers name
+what they got** — a mesh of 715 890 gaussians and a mesh of the 300 000 that
+survived a crop are the same command line and very different results.
+
+**The rows are copied verbatim.** A splat PLY carries 62 properties per vertex, 45
+of them spherical harmonics the preview path deliberately drops (§7.9), and a crop
+must lose none of them. So the kept records move as raw bytes of the source dtype
+and the header is the source's own bytes with `element vertex N` changed — whatever
+spirula wrote, we write back. Proven on the reference splat: 574 817 gaussians,
+142 556 147 B, cut to **441 084 in 0.46 s**, output byte count exactly
+`data_offset + count x 248` and 62 properties still there.
+
+Two passes, not one, and that is forced: **a PLY states its vertex count before the
+vertices**, and a crop cannot know that number until it has tested every gaussian.
+The first pass builds the mask from x, y, z alone; the second copies. Both are
+memory-mapped and chunked through the executor, so the event loop — and therefore
+the abort route — stays answerable, which is `step_analyze._chunked`'s argument
+(§15). This is also the **first pass in the app whose abort is only the cooperative
+flag**: `sam` and `geometry` are subprocesses that §2.6's tree kill unblocks, and
+there is no process here to kill.
+
+**The rule the stack is evaluated by**, identical in `core/crop.py` and in the
+preview shader:
+
+```
+kept = (inside at least one `keep` volume, or there are none)
+       and (inside no `delete` volume)
+```
+
+so a stack reads "keep this room, minus that lamp, minus those floaters", **delete
+always wins**, and a single `delete` sphere is a complete crop on its own. Eight
+volumes is the cap, because the shader carries a fixed-length uniform array and the
+two ends have to agree on one number. A crop that keeps *nothing* is refused before
+a byte is written — an empty result is always a mistake, and writing it would hand
+step 5 a valid PLY of zero gaussians to spend four minutes meshing.
+
+**The volumes are stored in the dataset frame, and that is not a detail.** The
+viewer applies one `Rx-90` for three.js's Y-up plus the "Flip up" toggle (§7.3), so
+a volume stored as authored would land somewhere else the next time the scene was
+opened with the flip in the other position. `cropVolumes.ts` converts on both
+sides; `crop.py` tests the `x, y, z` the tools wrote. A "sphere" with unequal
+half-extents is an ellipsoid on purpose — that is what a scaled sphere *is*, and
+refusing it would mean ignoring two thirds of a drag the user just made.
+
+**Where the volumes live: `settings_json` under `crop`.** It is the only §4 layer-3
+section with no `defaults.json` counterpart, because a volume placed around *this*
+scene is not a default anything could inherit. What it is, is project data that has
+to **outlive a step 4 reset** — `train/crop/` goes with `train/`, and should, but
+the frame comes from the sparse model, which a re-train does not touch, so the
+volumes are still exactly right and asking for them to be placed again with the
+gizmo would be gratuitous. It also means a copied project carries its crop.
+
+**The live cut is a shader patch, and it is contained rather than hidden.**
+`@mkkellogg/gaussian-splats-3d` builds its splat material itself and exposes no
+hook, so `cropShader.ts` edits the vertex shader by string, at the line where it
+has just decoded `splatCenter` and is about to leave model space — an anchor that
+occurs **exactly once** in the built source and is checked for that before
+anything is patched, so a library upgrade degrades to "no live preview, Apply still
+cuts the file" rather than to a blank canvas. Three things make it sound:
+
+- **`splatCenter` is in viewer world space**, and that is a property of how this app
+  configures the viewer rather than an assumption: with `dynamicScene: false` the
+  library bakes each scene's transform into the splat data, so the rotation
+  `SplatCanvas` passes to `addSplatScene` is already in there. It is the same space
+  `getSplatCenter(i, v, true)` reports and the same space the gizmo works in.
+- **The material is rebuilt whenever the mesh is**, which a progressive load does
+  more than once, so the patch is re-applied from the animation loop rather than
+  installed once in an effect — where it would be thrown away mid-load, silently,
+  and the preview would come back uncropped.
+- **The rejection is the library's own idiom**, `gl_Position = vec4(0.0, 0.0, 2.0,
+  1.0); return;`, which is already what it does for a splat outside the clip volume.
+
+The alternative was to filter the loaded `.splat` buffer on the CPU and hand the
+library a new scene per drag frame, which is a 32 MB re-upload at the viewer's
+default level. This is one `mat4` multiply per gaussian per frame on hardware
+already doing a covariance decode per gaussian per frame, and nothing at all when
+the stack is empty.
+
+`TransformControls` ships inside `three`, so the gizmo costs no dependency and no
+§10 row — the same argument that settled `GLTFLoader` for the mesh canvas. Each
+volume is a faint translucent solid (which is what the raycaster picks: a
+`LineSegments` is nearly impossible to click and an invisible mesh is skipped by
+`Raycaster` outright) under a bright wireframe, both with `depthTest` off, because
+the splats render with `depthWrite: false` and a volume inside the cloud would
+otherwise be a cage you can see only the near half of.
+
+**Measured whole in a browser on 2026-08-30**, headed on this workstation's GPU for
+the reason §12's 2026-08-28 row gives. On the 98 025-gaussian throwaway: adding the
+default keep box took the canvas PNG from 349 292 B to **158 036 B** (-54.8 %) and
+shrinking it to 0.6 units took it to **36 818 B** (-89.5 %); toggling "Live cut"
+off with the same volumes in place put it back to 279 387 B, which is what proves
+the shader is the thing doing the hiding. Dragging the translate gizmo moved the
+stored centre from `(0.174, 0.444, -0.096)` to `(0.405, 0.629, -0.096)`. Apply cut
+98 025 to **3 009 in 0.07 s** and the panel reported the output path. **No console
+error on any of it.**
+
+**Two states the panel exists to make impossible to miss.** *Stale*: a crop is on
+disk and the volumes have moved since, so the file is not wrong but *old*, and
+step 5 would read it without knowing — nothing re-runs on its own, the panel
+says so, and Apply is one click. *No live preview*: the shader patch did not take,
+so the volumes draw but nothing hides, which is said out loud rather than left to
+be read as "the crop selects everything".
+
+### 7.6c The export — a deliverable copy, in five formats
+
+A trained `splat.ply` is a **working file**: 62 float properties per vertex,
+248 bytes each, **177 542 251 B** for the 715 890 gaussians of the reference run.
+That is the right thing for step 5 to mesh and the wrong thing to hand anybody —
+a web viewer, a client, a phone. So step 4 gets one more pass, and what it writes
+is a third file beside the trained splat and the crop.
+
+**It is the opposite of the crop, and that is the whole design.** A crop is
+*pipeline data*: `resolve_splat` hands it to step 5 and it meshes what it
+gets. An export is *terminal* — smaller on purpose, by dropping spherical
+harmonics the mesher's colour pass wants and quantising into formats no
+mesher reads at all. So it lives in `train/export/`, it is **never named
+`splat.ply`**, and neither `find_splat` (which globs `step-*.ckpt/splat.ply`)
+nor `find_export_splat` can see it. `preview._find_splat` skips the directory
+outright for the same reason: a `.compressed.ply` would parse as a plain point
+cloud and draw as its vertices.
+
+It **reads the crop when there is one** — the source is `resolve_splat`, and the
+log line names which file it got. Proven rather than assumed: a 98 025-gaussian
+splat cut to 19 702 exported as `<slug>_crop_sh0.ply` with `source_cropped:
+true` and exactly 19 702 rows.
+
+**And it warns when there is one only on screen.** The live cut is a *shader
+test on the preview* (§7.6b), so volumes placed and never applied leave a scene
+that looks trimmed and a `resolve_splat` that still answers the trained splat —
+which is the one confusion this feature can plausibly cause, and it caused it on
+the first real run: a 573 956-gaussian export taken with a keep box sitting
+un-applied on the viewer. Nothing is guessed and nothing is refused; the panel
+says so above the button and the run broadcasts a WARNING, because a log line
+outlives the panel that could also have said it. A crop that exists but is
+*stale* gets the second half of the same treatment.
+
+**The panel is the last thing on step 4's page**, below the viewer that carries
+the crop. Everything above it produces the splat — the run, then the cut — and
+this is the only thing that produces a file for somebody else; asking for an
+export format before the scene has been looked at or trimmed is the wrong
+order.
+
+**Nothing spirula offers is involved.** There is no `spirula export`; everything
+in `train --help-all`'s `[Run & Output]` is about checkpoints, and
+`--quantization-level` is how colours are stored *during* training. Every
+reduction below is ours.
+
+#### What each reduction actually costs
+
+Measured 2026-08-30 on `soupirail_alfredriom`, 715 890 gaussians, 62 properties,
+248 B/vertex, 177 542 251 B:
+
+| Option | Result | Cost |
+|---|---|---|
+| **SH 3 → 0** (drop all 45 `f_rest_*`) | 68 B/vertex, **48 680 936 B**, 3.65× | 0.29 s |
+| **SH 3 → 1** (keep 9 of 45) | 104 B/vertex, **74 453 198 B**, 2.38× | 0.48 s |
+| **`.splat`** 32 B record | **22 908 480 B**, 7.75× | 0.33 s |
+| **Opacity floor** α ≥ 0.005 | drops **1.2 %** | one column |
+| **Opacity floor** α ≥ 0.05 | drops **43.2 %** | one column |
+| **Target count**, importance | 100 000 of 715 890 at SH 0 → 6 800 416 B, **26.1×** | 0.24 s |
+
+and on the 98 025-gaussian throwaway (24 311 730 B), through
+`@playcanvas/splat-transform`:
+
+| Format | Result | Cost |
+|---|---|---|
+| **`.sog`** | **1 181 769 B**, 20.6× | 4.74 s (k-means over the SH) |
+| **`.spz`** | **1 469 281 B**, 16.5× | 0.26 s |
+| **`.compressed.ply`** | **6 008 890 B**, 4.0× | 0.37 s |
+
+**Every knob ships off.** The default export is the trained splat byte for byte,
+in the trainer's own format: "give me the file" has to be one setting rather than
+a combination. Two of them carry a caveat the panel says out loud:
+
+- **The opacity floor is not free housekeeping here.** Spirula's gaussians are
+  low-opacity by construction — median linear alpha **0.059** under
+  `--opacity-reg 0.01` against a 1 M cap — so the 1/255 threshold every other
+  3DGS toolchain ships as a freebie drops 1.2 % of the reference file, and
+  anything high enough to matter is an edit of the picture.
+- **The importance score is approximate and is labelled so.** α × ellipsoid
+  volume, because the proper significance score counts how often each gaussian is
+  actually hit by a training ray and that needs a rasteriser, i.e. a trainer. It
+  does move the right way — keeping the top 50 % raised the mean alpha of the
+  survivors from 0.098 to 0.128 — and nothing is re-fitted afterwards, so a deep
+  cut thins the picture rather than simplifying it.
+
+#### The SH block is renumbered, and that was measured the hard way
+
+The layout is **channel-major**, `f_rest_{c*15+k}`, the INRIA convention —
+verified rather than assumed: the per-index RMS profile of the 45 coefficients
+repeats with period **15**, not 3 (`0.0632 0.0810 0.0641…` three times over). So
+a degree cut is a subset of columns per channel, never a head slice, which would
+keep the whole red channel and nothing of green or blue.
+
+**And the survivors must be renumbered contiguously.** A degree-1 PLY written
+with the source's own indices — `f_rest_0,1,2,15,16,17,30,31,32` — was refused by
+`splat-transform` with `readPly: unrecognized f_rest_* count 33`: a reader sizes
+the SH block from the *highest index it sees*, not from how many properties there
+are. The file had the right nine columns of data in it and was unreadable by
+everything but us. A degree-1 export carries `f_rest_0..8`.
+
+#### Two families of format, one pipeline
+
+`ply` and `splat` are `core/splat_export.py` — numpy over a memory map, no
+dependency, and the same two-pass chunked shape §7.6b uses for the same reason (a
+PLY states its vertex count *before* its vertices). Rows that drop no property
+are copied **verbatim** in the source's own dtype under the source's own header,
+so an unreduced export is the trainer's 62 properties bit for bit.
+
+`sog`, `spz` and `compressed-ply` are **`@playcanvas/splat-transform`** (§10),
+reached by writing the reduced PLY into a staging file and converting it. That
+ordering means every knob behaves identically in all five formats and the
+external tool only ever re-encodes a file we just wrote. It is resolved **before**
+the reduction runs, not after — §14.1's "locate the tool first, work second" one
+feature along.
+
+Both Python routes to those formats were checked and both are refused: **`spz`**
+(PyPI) ships one `cp313-manylinux` wheel and would need a Rust toolchain here,
+and **`sogs`** (PyPI) imports `torch`, `torchpq` and `plas` at module scope —
+`torchpq` is **CUDA**, which is §1's hard non-goal — on top of a GPLv3 `plyfile`
+it would pull into our own process.
+
+`train/export/` is inside `train/`, so a step 4 reset takes it (§14.1) — right,
+since the file is a copy of a splat that reset just deleted. The *plan* lives in
+`defaults.json` + `settings_json` under `export`, an ordinary §4 section unlike
+the crop's volumes, because "SH 0, .sog" is exactly the sort of thing that should
+follow you between projects.
+
+### 7.6d The saved viewpoint — one camera, stored once, shipped with the file
+
+A splat has no front. A trained scene opens whichever way the framing code
+points it, and the one person who knows which way it is worth being seen
+from is the person who just spent five minutes orbiting it. So the viewer's
+toolbar gets one more button, **Save view**, and what it saves rides out with
+the export.
+
+**It is the third thing stored in the dataset frame, and for the third time
+that is the whole care of it.** The viewer draws everything under one `Rx-90`
+scene root plus "Flip up" (§7.3), so a camera read straight off
+`viewer.camera` is in *viewer* space and would point somewhere else the next
+time the scene was opened with the flip the other way — the trap §7.6b stores
+the crop volumes in the dataset frame to avoid. `viewpoint.ts` converts on both
+sides, `core/viewpoint.py` never has to know about three.js, and the stored
+`up` comes back as **`(0, 0, 1)`** — measured in a browser, which is +Z and
+therefore the conversion working rather than a constant somebody typed.
+
+**Where it lives: `settings_json` under `viewpoint`.** The second §4 layer-3
+section with no `defaults.json` counterpart, next to the crop's volumes and for
+the same reason — a camera parked in front of *this* scene is not a default
+another project could inherit — and it outlives a step 4 reset for the same
+reason too, since the frame comes from the sparse model a re-train does not
+touch. There is no debounce and there is no Save button anywhere else in this
+app, and both are right: every other panel saves a *stream* of edits, this
+saves one deliberate act.
+
+**Restoring is exact, and it took a measurement to make it so.**
+`@mkkellogg/gaussian-splats-3d` builds its OrbitControls with
+`enableDamping = true, dampingFactor = 0.05`, and a damped `update()` keeps
+applying the residual of the last drag *after* a teleport: measured in a
+browser, "Saved" clicked 2.5 s after a drag landed **0.025 away** from the
+stored position and went on drifting. The fork exposes `clearDampedRotation()`
+and `clearDampedPan()`; calling both before the camera moves took the same
+measurement to **0.000000** on position and target alike. They are declared
+optional in the typings, so a library that drops them degrades to the
+approximate restore rather than to a crash.
+
+**Restoring across a flip turns the scene over first.** `flip_up` is stored not
+because the numbers need it — they are frame-independent — but because the
+*scene* does: the splat canvas reads its rotation once, at load, so a restore
+under the other vertical sets the toggle and lands the camera when the canvas
+comes back (`restoreOnLoad`).
+
+#### What "shipped with the file" means, per format
+
+| Format | Where the viewpoint goes |
+|---|---|
+| `ply` | **the header**, as `comment viewpoint …` lines |
+| `splat`, `sog`, `spz`, `compressed-ply` | **`<name>.viewpoint.json` beside it** |
+
+PLY comments are part of the format and every reader skips the ones it does not
+know, so this costs a few dozen bytes and breaks nothing — measured on the
+reference crop, 312 347 gaussians: both header routes carry them (the verbatim
+copy of the source's own header *and* the header rebuilt for an SH cut), the
+file re-reads at exactly `data_offset + count x stride`, and
+`@playcanvas/splat-transform` read the commented PLY back without complaint
+(`312K gaussians · 3 SH bands`, exit 0). One line per key, space-separated,
+because a comment is free text and the only thing that makes it readable
+elsewhere is being trivially parseable.
+
+Everything else has nowhere to put it — `.splat` is a headerless stream of
+32-byte records, and the three compressed formats are written by a tool that
+would drop whatever we put in the PLY we hand it — so those get a sidecar. A
+sidecar is honest about what it is; inventing a private container would not be.
+
+**A stored viewpoint that will not parse is said out loud, not dropped.**
+`core/viewpoint.py` refuses a camera standing on its own target, a
+non-finite coordinate and a field of view outside 1–179°, and the run
+broadcasts a WARNING and exports without it — it is the one part of an export
+the user placed by hand, so its absence has to be visible. The panel says the
+same thing before the run, through the same parser, so the two cannot disagree.
+
 ### 7.7 Step 4's progress channel — the one tool in this family that gets it right
 
 ```
@@ -836,6 +1276,21 @@ spirula --lang en mesh <checkpoint> --data <project>/sfm --output <project>/mesh
 `<checkpoint>` is a run directory, a `*.ckpt` directory, or a `splat.ply`. `--data` gives
 the cameras that decide occupancy and colour; `--no-data` meshes from the gaussian
 densities alone.
+
+**`mesh` reads the images through the dataset folder, exactly like `geometry`, and
+step 5 junctions them in for the length of the run.** There is no `--image-dir` on
+this tool either — `mesh --help` lists none, whatever the shared ColmapParser's
+"set --image-dir if needed" says. Measured 2026-08-30 on `poubelle_garnier_v2`: with
+the crop's `train/crop/splat.ply` as the checkpoint the run read the cameras and then
+died on `ColmapParser: <project>\sfm\images\frame_0001.jpg does not exist`, **exit 1**,
+nothing written. **A checkpoint under `train/run/` escapes it for a reason worth
+writing down: the tool reads the `image_dir` recorded in that run's own
+`config.json`** — `train/run/config.json` carries the absolute `frames/` path step 4
+passed — so step 5 worked from the trained splat and failed on every cropped project,
+because `train/crop/` has no `config.json` above it. `core/dataset_images.py` holds
+the junction both steps now share; with it in place the identical command wrote
+**363 468 vertices / 402 011 faces and a 26.3 MB `mesh.glb` in 98.34 s** from 312 347
+cropped gaussians and 300 cameras.
 
 **Always pass `--output`.** Its default is `<checkpoint>/mesh`, and `<checkpoint>`
 resolves to the `.ckpt` **directory** — measured, a run given the run directory wrote
@@ -965,10 +1420,12 @@ hole; and a **wireframe toggle**, because a surface that looks solid and a surfa
 solid are the same picture until you see the edges. The level selector is hidden for it —
 there is nothing decimated to open instead.
 
-### 7.10 Step 6 — export + scene
+### 7.10 Step 5's second half — `export/`
 
-Blender, `blender_splatforge.py`, inherited. Steps 5 and 6 share `export/`, so resetting 5
-takes 6 with it — the same rule as `3DGS_App_26` §14.1.
+**The pipeline ends here.** There was a step 6 that ran Blender headless over
+`blender_splatforge.py` to assemble a `scene.blend`; it was removed on 2026-08-30 (§12)
+and nothing replaced it. `export/` is now step 5's own delivery drawer and the last thing
+the pipeline writes.
 
 **`export/` is filled by step 5's second half, and it holds hard links.** `step_export`
 takes step 4's `train/run/step-*.ckpt/splat.ply` and step 5's `mesh/` outputs — not
@@ -980,12 +1437,11 @@ reset drops `train/` and leaves `export/` holding the bytes — and nothing in t
 writes *into* an exported file. It does **not** reset step 5 itself: `run_mesh` already
 did, before it wrote a byte, and a second reset would delete the mesh it is exporting.
 
-**Step 6 asks for the splat by name, not by glob.** With `mesh --format ply` the export
-holds `mesh.ply` too and it sorts first, so the predecessor's `glob("*.ply")[0]` would hand
-Blender a surface mesh to import as a gaussian cloud. `find_export_splat` is the one that
-knows. The README it writes lost its `{supersplat_url}` placeholder in the same commit:
-`supersplat_url` left `config.json` with the two CUDA tools, and reading it raised
-`AttributeError` on every step 6 — *after* Blender had already run.
+**The splat is asked for by name, not by glob.** With `mesh --format ply` the export holds
+`mesh.ply` too and it sorts first, so the predecessor's `glob("*.ply")[0]` would hand a
+caller asking for the gaussian cloud a surface mesh instead. `find_export_splat` is the one
+that knows, and it survives the step that used to call it because `/api/files/{id}/export`
+labels the drawer's contents with it.
 
 ---
 
@@ -1028,12 +1484,24 @@ GET    /api/pipeline/status            running state
 POST   /api/pipeline/analyze           re-run curation alone — never re-extracts
 POST   /api/pipeline/masks             run `spirula sam` alone — never re-extracts (§7.4)
 POST   /api/pipeline/geometry          run `spirula geometry` alone — never re-trains (§7.5)
+POST   /api/pipeline/crop              cut the splat to the crop volumes — never re-trains (§7.6b)
+POST   /api/pipeline/export-splat      write a deliverable copy of the splat (§7.6c)
 GET    /api/settings/                  config.json  (installation)
 PUT    /api/settings/                  update config.json
 GET    /api/defaults/                  defaults.json (business defaults)
 PUT    /api/defaults/                  deep-merge update
 POST   /api/defaults/reset             factory reset (optional ?section=)
 GET    /api/defaults/presets           capture presets
+GET    /api/models/                    the checkpoint catalogue, the licences, the cache
+                                       and what is installed in it (§7.4b)
+POST   /api/models/{id}/download       fetch one — returns at once, poll the GET.
+                                       Refuses without the matching licence accepted
+POST   /api/models/{id}/cancel         stop it; what was fetched stays a resumable .part
+POST   /api/models/{id}/verify         re-read the files and re-check them against the manifest
+POST   /api/models/{id}/adopt          install one downloaded by hand, from a path on this machine
+POST   /api/models/{id}/use            point defaults.json's sam/geometry `model` at it
+DELETE /api/models/{id}                remove its files from the cache
+GET    /api/models/in-use              which checkpoint each family's default names
 GET    /api/version/                   app name, version (commit date) and commit id
 GET    /api/files/{project}/frames     frame list + curation verdicts
 GET    /api/files/{project}/analysis   scores.json + selection.json + overrides
@@ -1041,6 +1509,12 @@ GET    /api/files/{project}/sources    input/ listing: probe + poster frame per 
 GET    /api/files/{project}/masks      what masks/ holds, plus the last sam run's report
 GET    /api/files/{project}/geometry   what sfm/{normals,depths}/ hold + the last run
 GET    /api/files/{project}/train      train_result.json + what --data and --image-dir will read
+GET    /api/files/{project}/crop       the crop volumes, the last cut, and whether it is stale (§7.6b)
+GET    /api/files/{project}/export-splat   the export drawer, the saved viewpoint (§7.6d)
+                                       and where this format would carry it, what the
+                                       next export reads, and
+                                       whether splat-transform is installed (§7.6c)
+DELETE /api/files/{project}/export-splat   empty train/export/ — nothing downstream notices
 GET    /api/files/{project}/mesh       mesh_result.json + the checkpoint and cameras step 5 will read
 GET    /api/files/{project}/preview    3D preview state (?source=sfm|train|mesh&max_count=)
 POST   /api/files/{project}/preview    build that preview — returns at once, poll the GET
@@ -1049,15 +1523,17 @@ WS     /ws/logs                        progress, logs, metrics
 GET    /static/<slug>/...              project files (thumbnails, exports)
 ```
 
-`/masks` and `/geometry` are the same argument one step earlier as `/analyze`: **the
-expensive phase must not be redone to change a threshold.**
+`/masks`, `/geometry`, `/crop` and `/export-splat` are the same argument one step
+earlier as `/analyze`: **the expensive phase must not be redone to change a
+threshold.** The last of the four is also the only one whose output no later step
+reads.
 
 ---
 
 ## 10. Licence audit table
 
-Audit as if the tool could be distributed tomorrow. FFmpeg, spirula and Blender are
-invoked as **subprocesses**, never linked.
+Audit as if the tool could be distributed tomorrow. FFmpeg and spirula are invoked as
+**subprocesses**, never linked.
 
 | Dependency | Licence | Status |
 |---|---|---|
@@ -1068,11 +1544,17 @@ invoked as **subprocesses**, never linked.
 | NumPy | BSD-3 | ✅ ok |
 | PySceneDetect | BSD-3 | ✅ ok |
 | FFmpeg (system exe) | LGPL-2.1+ (GPL if built with x264) | ✅ ok as subprocess — re-audit before any distribution |
-| **Spirula Studio (`spirula.exe`)** | **GPL-3.0** | ✅ **subprocess only, never linked, never bundled** — same standing Blender has. Two footnotes below |
-| Blender | GPL, external | ✅ subprocess only, never bundled |
-| **SAM 2.1 checkpoint** (via `spirula sam`) | **Apache-2.0** | ⚠ never bundled; downloaded on first use into `%LOCALAPPDATA%\spirula-studio\models\`. Terms shown in the UI before the first fetch (§7.4) |
-| **SAM 3 checkpoint** (via `spirula sam`) | **Meta's own, non-standard** | ⚠ never bundled; same route, and the licence is *not* Apache — it must be shown and accepted distinctly from SAM 2.1's |
-| **MoGe / Metric3D checkpoints** (via `spirula geometry`) | to be confirmed per model | ⚠ downloaded from HuggingFace on first use — measured 2026-08-28: `moge2-vitb-normal.onnx`, 419.4 MB, from `huggingface.co/Ruicheng/moge-2-vitb-normal-onnx`, cached in `%LOCALAPPDATA%\spirula-studio\models\`. **Not yet audited — §13.5.** The step names the URL and says so before it fetches |
+| **Spirula Studio (`spirula.exe`)** | **GPL-3.0** | ✅ **subprocess only, never linked, never bundled**. Two footnotes below |
+| ~~Blender~~ | GPL, external | ❌ **removed 2026-08-30 with wizard step 6** (§12). No longer invoked anywhere; `blender_exe_path` is out of `config.json` |
+| **`@playcanvas/splat-transform`** (npm) | **MIT** | ✅ **optional, subprocess only, never linked, never bundled** — the three compressed export formats of §7.6c (SOG, SPZ, compressed PLY) and nothing else. Installed into the gitignored `tools/splat-transform/` with `npm install --prefix tools/splat-transform @playcanvas/splat-transform`; needs Node.js. PLY and `.splat` exports need nothing at all |
+| ↳ `@adobe/spz` (its dependency) | ISC | ✅ ok — pulled in by the above, never imported by us |
+| ↳ `webgpu` (its dependency) | MIT | ✅ ok — same standing |
+| ~~`spz`~~ (PyPI) | MIT OR Apache-2.0 | ❌ **rejected 2026-08-30**: one wheel published, `cp313-manylinux_2_34_x86_64`. No Windows wheel, so it means a Rust toolchain on the target machine — the *build* dependency §5.1 refuses for spirula itself |
+| ~~`sogs`~~ (PyPI) | Apache-2.0 | ❌ **rejected 2026-08-30**: declares `numpy, pillow, plyfile, tyro` and then imports `torch`, `torchpq` and `plas` at module scope. **`torchpq` is CUDA** — §1's hard non-goal — and its declared `plyfile` is **GPLv3**, which importing would pull into our own process rather than leave in a subprocess |
+| **SAM 2.1 checkpoints** (via `spirula sam`) | **Apache-2.0** | ⚠ never bundled. Four rows — tiny / small / base+ / large, 79.3 MB to 450.9 MB — installed by **Setup → Checkpoints** (§7.4b) into `%LOCALAPPDATA%\spirula-studio\models\`. Terms shown and accepted before any fetch, and the route re-checks the acceptance |
+| **SAM 3 checkpoints** (via `spirula sam`) | **Meta's own, non-standard** | ⚠ never bundled; same route (`sam3-q4_0` 706.6 MB, `sam3-f16` 1.84 GB), and the licence is *not* Apache — it is a **separate switch** in the panel from SAM 2.1's, because one acceptance spanning both would answer the harder question by accident. Both come from `huggingface.co/PABannier/sam3.cpp`, whose repo card declares no licence of its own: the terms are Meta's, taken from upstream |
+| **Metric3D checkpoints** (via `spirula geometry`) | **CC0-1.0** | ✅ audited 2026-08-30 through the HuggingFace API: all three `onnx-community/metric3d-vit-{small,large,giant2}` cards declare `cc0-1.0`, a public-domain dedication with nothing to comply with. Never bundled; installed by §7.4b. The upstream Metric3D research code is a separate question this app never touches |
+| **MoGe-2 checkpoints** (via `spirula geometry`) | **MIT upstream — the mirrors are thinner** | ⚠ audited 2026-08-30 and **not clean**: `Ruicheng/moge-2-vitl-normal-onnx` declares `mit` on its card, and the `vits` / `vitb` mirrors — the second of which is the 419.4 MB file spirula fetches by default — **declare no licence at all**. MoGe-2 upstream is MIT, so the terms are taken from upstream rather than from the repository the file actually comes from. §7.4b's panel says exactly that, in amber, and §13.5 stays open on this one row alone |
 | React / Vite / Tailwind / shadcn/ui / Zustand / recharts | MIT | ✅ ok |
 | three.js (`three`, `@types/three`) | MIT | ✅ ok — the 3D viewer (§7.9) |
 | `@mkkellogg/gaussian-splats-3d` | MIT | ✅ ok — the sorted splat rasteriser (§7.9) |
@@ -1150,6 +1632,20 @@ Any new dependency → add a row here in the same commit.
 | 2026-08-28 | **`sam` and `geometry` attach to a wizard step without ever marking it done, and that is a correction rather than a decision.** The inherited `run_mask_generation` set `step_status["3"] = "done"` on success — so writing 238 mask PNGs would have put a green tick on a reconstruction that had never been run, and a *failed* mask pass would have painted a finished one red. Curation earns `/analyze`'s treatment because it really is the second phase of step 2; masking and geometry do not, because a mask run produces no reconstruction and a geometry run produces no splat. `_run_attached_pass` captures the step's prior status and hands it back — on success, on abort and on error alike — and only the run's own name (`masks`, `geometry`) carries live state to the LiveLog and the bar, which the store already mapped to steps 3 and 4. `masks/` stays step 2's directory in §14.1's table for the same reason: it is an input to the reconstruction, not an output of it. |
 | 2026-08-28 | **Two more channels join `_EXTRACT_NOISE`'s rule, and one of them is this tool family's only CR-redrawn bar.** The failing geometry run printed **476 of its 483 non-bar lines** as one `load_image: cannot read` / `skipping` pair per image, against a 500-line LiveLog; they are counted rather than logged, and the count *is* the finding the step reports. The 419.4 MB checkpoint fetch arrives as **703 CR fragments** through `iter_lines`, which is the §15.1 defect `proc.iter_lines` was kept for — they ride their own 0.02→0.20 stretch of the bar with an empty message, which `websocket.broadcast` omits from the payload. Measured over a real run: monotone 0.00 → 0.99, 250 lines to the bus, none of them a bar fragment. `sam mask` needed the opposite treatment: **two lines for the whole run and no counter**, 238 frames in 2.6 s, so its bar is its two ends and `ProgressBar`'s indeterminate fallback covers the middle. |
 | 2026-08-28 | **A `--normal-format` switch writes the new maps beside the old rather than over them, so the run says so.** A `png` run followed by a `jpg` one left `sfm/normals/` holding **476 files for 238 frames**: `--overwrite` is about recomputing a map, not about a file whose name no longer matches. Which of the two `train --normal-dir` then reads is not something to guess at on the user's behalf, so `step_geometry` counts the other format and names it, in the log and in `geometry_result.json`. The same reasoning put `mask_result.json` in `analysis/` rather than in `masks/`: §5 says `masks/` holds one greyscale PNG per frame, and it is a directory both `sfm auto` and `train` are pointed at. |
+| 2026-08-30 | **The splat gets a crop tool, and §1's "the viewer looks, it never writes" is amended rather than broken — because the viewer still never writes.** JB asked for box and sphere volumes placed in 3D with an invert, keeping or removing the gaussians inside them. The viewer places them and shows the cut; `core/crop.py` makes it, server-side, over the full PLY; and what it makes is **a second file beside the trained splat**, `train/crop/splat.ply`, which is what keeps the whole thing reversible — a crop is undone by deleting one directory, a re-crop starts from the trained splat rather than from the last crop, and `step_crop.resolve_splat` is the single place steps 5 and 6 choose between them, **both naming which file they got**. The preview could not have done the cut: `SceneViewer` opens a decimated `.splat` of at most a million records against a `splat.ply` that measured **142 556 147 B / 574 817 gaussians** on the reference project, so the browser sees a sample and only the backend sees every gaussian. **The rows are copied verbatim** — 62 properties, 45 of them spherical harmonics the preview path drops — with the source's own header and one number changed: measured, that splat cut to **441 084 gaussians in 0.46 s**, output size exactly `data_offset + count x 248`, 62 properties intact, and a tagged column proved the kept rows were the right ones. Two passes are forced, because a PLY states its vertex count *before* the vertices. The stack rule is `(inside a keep volume, or there are none) and (inside no delete volume)` — **delete always wins** — implemented once in numpy and once in GLSL, capped at 8 because the shader's uniform array is fixed-length, and a crop keeping nothing is refused before a byte is written. The volumes are stored in the **dataset frame** so the `Rx-90` and "Flip up" of §7.3 cannot move them, and in `settings_json` rather than in `train/`, so they **outlive the step 4 reset** that correctly takes the cut file with it. |
+| 2026-08-30 | **The live cut is a string patch of the splat library's vertex shader, and it was watched in a browser rather than reasoned about.** `@mkkellogg/gaussian-splats-3d` exposes no hook, so `cropShader.ts` injects the volume test at the line where the shader has just decoded `splatCenter` — an anchor that occurs **exactly once** in the built source and is checked for before anything is patched, so a library upgrade degrades to "no live preview, Apply still cuts the file" instead of to a blank canvas. It works on `splatCenter` directly because `dynamicScene: false` makes the library **bake** the scene transform into the splat data, which is the same space `getSplatCenter(i, v, true)` reports and the same space the gizmo works in; and it is re-applied from the animation loop because the library **rebuilds the material whenever it rebuilds the mesh**, which a progressive load does more than once — installed once in an effect it would be silently thrown away mid-load and the preview would come back uncropped. The alternative, filtering the `.splat` buffer on the CPU, is a 32 MB re-upload per drag frame. Driven headed through Playwright on this workstation's GPU, for the reason the 2026-08-28 row gives: on the 98 025-gaussian throwaway the canvas PNG went **349 292 B → 158 036 B** (-54.8 %) on adding the default keep box and **→ 36 818 B** (-89.5 %) at 0.6 units, and toggling "Live cut" off with the same volumes in place put it back to **279 387 B** — which is what proves the shader is the thing hiding them rather than something else. The translate gizmo moved the stored centre `(0.174, 0.444, -0.096) → (0.405, 0.629, -0.096)`, Apply cut 98 025 to **3 009 in 0.07 s**, and there was **no console error** on any of it. `TransformControls` ships inside `three`, so the gizmo costs no dependency and no §10 row — the same argument that settled `GLTFLoader` on 2026-08-28. |
+
+| 2026-08-30 | **Step 4 gets a deliverable export, and it is the mirror image of the crop: nothing in the pipeline reads it.** JB asked for the trained PLY to be exportable, with reduction if it was possible. It was, in five formats. The crop writes *pipeline data* — `resolve_splat` hands it to steps 5 and 6 — whereas this writes into `train/export/` under a name neither `find_splat` nor `find_export_splat` can match, and `preview._find_splat` skips the directory outright because a `.compressed.ply` would parse there as a plain cloud and draw as its vertices. **Spirula contributes nothing to it**: there is no `spirula export`, and `--quantization-level` is a *training* setting. So every reduction is ours, measured on the 715 890-gaussian reference splat (177 542 251 B): **SH 3→0 is 68 B/vertex, 48 680 936 B, 3.65×, in 0.29 s** with no geometry loss at all — 72.6 % of every vertex is spherical harmonics — SH 3→1 is 2.38×, the existing 32-byte `.splat` record is 7.75×, and a 100 000-gaussian target at SH 0 is 26.1×. **Two of the knobs carry a measurement that contradicts the obvious default.** The 1/255 opacity floor every other 3DGS toolchain ships as free housekeeping drops **1.2 %** here and 0.05 drops **43.2 %**, because spirula trains at low opacity by design (median linear alpha 0.059 under `--opacity-reg 0.01`); and the importance score is α × ellipsoid volume, an honest approximation of LightGaussian's hit-counted one, which needs a rasteriser we refuse to add. Both ship **off**, and both say so in the panel. Rows that drop no property are copied verbatim under the source's own header, so an unreduced export is the trainer's 62 properties bit for bit. **The panel lives at the bottom of step 4's page, below the viewer that carries the crop** — everything above it makes the splat, and this is the only thing that makes a file for somebody else. It reads the crop through `resolve_splat` (measured: 98 025 cut to 19 702, exported at exactly 19 702) and it **warns when volumes are placed but not applied**, which is not hypothetical — the first real run exported 573 956 gaussians with a keep box sitting un-applied on the viewer, where the live shader had already made the scene look cut. |
+| 2026-08-30 | **The surviving SH columns are renumbered, and the file that proved it was readable only by us.** The `f_rest` layout is channel-major, `f_rest_{c*15+k}` — verified rather than assumed, by the per-index RMS profile of the 45 coefficients repeating with period **15** and not 3. A degree cut is therefore a per-channel subset and never a head slice (which would keep all of red and none of green or blue). But a degree-1 PLY written with the source's *own* indices — `f_rest_0,1,2,15,16,17,30,31,32` — was refused by `splat-transform`: **`readPly: unrecognized f_rest_* count 33`**. A reader sizes the SH block from the highest index it sees, not from how many properties are declared, so the nine right columns of data under their original names are an unreadable file everywhere but here. `kept_properties` returns `(output name, source name, code)` triples for exactly this, and a degree-1 export carries `f_rest_0..8`. Caught by running the conversion rather than by reasoning about the format. |
+| 2026-08-30 | **The three compressed formats are `@playcanvas/splat-transform`, MIT, a subprocess — and both Python routes to them were measured and refused.** `spz` (PyPI, MIT/Apache-2.0) publishes exactly one wheel, `cp313-manylinux_2_34_x86_64`, so on this Windows workstation it means building a Rust crate — the *build* toolchain §5.1 refuses for spirula itself. `sogs` (PyPI, Apache-2.0) declares `numpy, pillow, plyfile, tyro` and then imports `torch`, **`torchpq`** and `plas` at module scope: `torchpq` is CUDA, and a CUDA dependency is §1's whole reason this project exists — plus a GPLv3 `plyfile` it would pull into our own process rather than leave in a subprocess, which is precisely the line §10 draws around spirula and Blender. The npm CLI has the standing FFmpeg, spirula and Blender have, needs no GPU compute, and writes all three from one invocation: measured on the 98 025-gaussian throwaway (24 311 730 B), **`.sog` 1 181 769 B (20.6×) in 4.74 s**, **`.spz` 1 469 281 B (16.5×) in 0.26 s**, **`.compressed.ply` 6 008 890 B (4.0×) in 0.37 s**. It is resolved *before* the reduction runs, on §14.1's locate-the-tool-first rule, and it is optional: PLY and `.splat` need nothing installed and the panel greys the other three out with the install line rather than offering a button that fails after the work. |
+
+| 2026-08-30 | **Wizard step 6 is removed: no Blender, no `scene.blend`, and the pipeline now ends at the mesh.** JB's call. Step 6 shelled out to Blender headless with `blender_splatforge.py` to import `export/splat.ply` through the SplatForge add-on and save a `scene.blend` beside it — and it is the one step that had never been run since it was rewired off `lfs_output/` (TODO.md P2.3). What it produced was a convenience wrapper around a manual import, and it cost a third external binary on the machine, a `blender_exe_path` in `config.json`, a `blender` section in `defaults.json`, a §10 licence row, and a shared-directory rule (`export/` belonging to two steps) that every reset, every log line and half of `step_export`'s docstring had to explain. **`export/` is now step 5's alone** — it meshes, then fills the drawer with the splat it meshed and the mesh it wrote — so §14.1 loses a row rather than gaining a caveat, and `run_mesh`'s "this re-run also clears the Blender scene" warning goes with it. Nothing downstream is lost: `export/splat.ply` and `export/mesh.glb` are the same hard links they always were, and importing one into Blender by hand is the same two clicks the generated scene was wrapping. `find_export_splat` survives its only remaining caller, `/api/files/{id}/export`, because `mesh.ply` still sorts before `splat.ply` and something has to say which is which. Deleted: `backend/core/steps/step_scene.py`, `backend/scripts/blender_splatforge.py`, `frontend/src/components/wizard/steps/Step6_Scene.tsx`, `frontend/public/help/step6.html`. |
+
+| 2026-08-30 | **The splat viewer gets "Save view", and what it saves is shipped with the export rather than kept in the app.** JB asked for a button on step 4's splat preview to store the viewpoint, for the export to use. A splat has no front — the framing code points the camera wherever the bounds say — so the one thing this feature carries is the judgement of the person who just orbited the scene. It is stored in the **dataset frame**, the third thing to be (after the crop volumes and the tools' own `x, y, z`), and for the third time that is the whole care of it: measured in a browser, the stored `up` comes back **`(0, 0, 1)`**, which is +Z and therefore the `Rx-90` conversion working rather than a constant somebody typed. It lives in `settings_json` under `viewpoint` — the second §4 layer-3 section with no `defaults.json` counterpart, for the crop's reason, and it outlives a step 4 reset for the crop's reason too. **Restoring it is exact, and that took a measurement.** `@mkkellogg/gaussian-splats-3d` runs its OrbitControls with `enableDamping = true, dampingFactor = 0.05`, and a damped `update()` keeps applying the last drag's residual *after* a teleport: "Saved" clicked 2.5 s after a drag landed **0.025 away** from the stored position and drifted on. Its fork exposes `clearDampedRotation()` and `clearDampedPan()`; calling both first took the same measurement to **0.000000** on position and target alike — drag away, click Saved, click Save view, and the numbers are the ones stored before the drag. **What "used on the export" means is decided by the format, not by us.** A native `.ply` carries it in the header as `comment viewpoint …` lines — measured on the 312 347-gaussian reference crop, on both header routes (the verbatim copy of spirula's own header and the header rebuilt for an SH cut), the file re-reading at exactly `data_offset + count x stride` and `@playcanvas/splat-transform` reading the commented PLY back without complaint. Everything else — `.splat`'s headerless 32-byte records and the three formats the external tool re-encodes — gets a `<name>.viewpoint.json` beside it, because a sidecar is honest and a private container would not be. A stored viewpoint that will not parse **warns and is left out** rather than failing the export or vanishing from it: it is the one part of an export the user placed by hand. |
+| 2026-08-30 | **The checkpoints get a manager in the global setup panel, and its catalogue is read out of `spirula.exe` rather than off a web page.** JB asked for a downloader to simplify the post-install of this class of dependency, and to put it in the global parameters rather than a step's sub-panel — which is right twice over: a checkpoint is a property of this machine, like the FFmpeg path, and asking for one from inside step 3 asks the same question once per project. The binary turned out to carry its own manifest — local filename, URL and, for the geometry models, a **sha256** — as three null-terminated strings in a row, twelve rows in all. Proven before it was trusted: the `moge2-vitb-normal.onnx` a real `geometry` run had already fetched hashes to `bbf14e07…f35a21` over 419 411 850 bytes, **exactly** the value in the exe, so a file this panel installs is byte-indistinguishable from one the tool downloaded itself. Every size is `X-Linked-Size` off a live HEAD, so the panel names a real download before fetching. **The `.part` convention is spirula's own**, not ours — its aborted `moge2-vitl` fetch had left one, 1 232 896 bytes — and HuggingFace answers `206 Partial Content`, so this resumes the tool's leftovers as readily as its own: watched end to end, that part grew to 22 204 416, Cancel left it there, and the next Download **resumed at 22 204 416 rather than 0**. `sam2.1-tiny` installed whole in **14.2 s**, verified, with `/use` writing the absolute path *and* the licence accepted for it into `defaults.json` — the absolute path being what stops `geometry` opening the network mid-run, since **no environment variable moves the tool's own cache** (`SS_LANG, SS_VK_DEVICE, SS_NO_AUTO_FETCH, SS_NN_LOG…` and nothing for a model directory). Four licences and four separate switches, gated in the panel *and* re-checked in the route. |
+| 2026-08-30 | **The audit §13.5 owed came back mixed, and the panel says which half.** Queried through the HuggingFace API: all three `onnx-community/metric3d-vit-*` cards declare **CC0-1.0**, which closes that family outright. MoGe-2 did not — `moge-2-vitl-normal-onnx` declares `mit`, and the `vits` and `vitb` mirrors **declare no licence at all**, the second of them being the 419.4 MB file spirula fetches by default. Upstream MoGe-2 is MIT, so the terms are taken from upstream rather than from the repository the bytes come from, and that is a weaker statement than a licence on the artefact. It is written in the row, and the panel draws that licence with an amber "not audited" flag instead of a tick — the alternative was a green tick on an inference. §13.5 shrinks to one family instead of closing. |
+| 2026-08-30 | **The first-run screen could never be got past on a fresh install, and it was found by making it compile.** `SetupScreen` gated Proceed on `rc_exe_path && lfs_exe_path` — RealityScan and LichtFeld Studio, whose keys left `config.json` when the tools did (§12, 2026-08-27) — so `canProceed` was permanently false and the only screen a new install sees was a dead end. It survived P1 because `App.tsx` skips it the moment a project exists, and this workstation has had projects since the first day. It now gates on **spirula.exe and FFmpeg**, which are what a pipeline actually needs, and reports the checkpoints as explicitly **optional**: `sfm`, `train`, `mesh` and `sam mask` want none, so a first run should not be blocked on a 700 MB download it may never use. The setup panel's Tools section lost the same two dead rows and gained the spirula path and the checkpoint cache. |
+| 2026-08-30 | **Step 5 could not mesh a cropped splat, and the junction §7.5 built for `geometry` is what it needed too.** `Poubelle_Garnier_V2` failed step 5 at **exit 1** with nothing written: `ColmapParser: <project>\sfm\images\frame_0001.jpg does not exist (set --image-dir if needed)` — a flag `mesh --help` does not list, on a tool that resolves `<dataset>\images\<name>` exactly as `geometry` does. **What hid it for two days is worth the row on its own:** handed a checkpoint under `train/run/`, `mesh` reads the `image_dir` recorded in that run's own `config.json` (measured: `train/run/config.json` carries the absolute `frames/` path step 4 passed) and never consults the dataset at all — so `zz_abort_test` meshed from `step-000000200.ckpt/splat.ply` and every project that had been **cropped** failed, because §7.6b writes `train/crop/splat.ply` and there is no `config.json` above it. The crop shipped on 2026-08-30 and took step 5 with it. The fix is `_ImageJunction` promoted out of `step_geometry` into `core/dataset_images.py` and entered by both runs: created before the command, removed in `__exit__`, so §5's layout on disk is still exactly what §5 says it is and there is still one copy of the frames. Measured with it in place, the identical failing command wrote **363 468 vertices / 402 011 faces, `mesh.glb` 26.3 MB, in 98.34 s** from the 312 347 cropped gaussians and 300 cameras, and the whole step run through `run_mesh` finished exit 0 with the junction created during the run and gone after it. The alternative — passing the `.ckpt` directory instead of the `splat.ply` — would have papered over it for uncropped projects and left the crop unmeshable, which is the case that matters. |
 
 Any new structural decision → add a row here in the same commit.
 
@@ -1188,10 +1684,15 @@ comes next. The genuinely open questions, in the order they block something:
    `--normal-dir` remain assumed by symmetry and are **not on the live path**, since
    `sfm/depths` and `sfm/normals` are inside `--data`. What the runs also turned up is
    worth more than the answer: **a wrong `--mask-dir` exits 0 and trains unmasked.**
-5. **The MoGe / Metric3D checkpoint licences** (§10). Still open, and now on a live path:
-   the default fetch is `moge2-vitb-normal.onnx`, 419.4 MB, from
-   `huggingface.co/Ruicheng/moge-2-vitb-normal-onnx`. The step names the URL and says the
-   licence is unaudited before it runs; the audit itself is still owed.
+5. **The MoGe checkpoint licences.** **Half-settled 2026-08-30.** Audited through the
+   HuggingFace API: the three `onnx-community/metric3d-vit-*` cards declare **CC0-1.0**,
+   so that family is closed. MoGe-2 is not — `moge-2-vitl-normal-onnx` declares `mit`
+   while the `vits` and `vitb` mirrors **declare no licence at all**, and `vitb` is the
+   419.4 MB file spirula fetches by default. Upstream MoGe-2 is MIT, so the terms are
+   inferred from upstream rather than read off the artefact, which is weaker than an
+   audit. §7.4b's panel flags that licence amber rather than ticking it, and §10 carries
+   the finding. What is still owed is a licence *on the mirrors themselves*, or a
+   decision to fetch from a repository that has one.
 6. ~~**Does step 5's mesh get its own viewer mode, or a thumbnail?**~~ **Settled
    2026-08-28: the third renderer.** `GLTFLoader` ships inside `three`, so it costs no
    dependency and no §10 row; `MeshCanvas` is §7.9. The mesh has no decimated preview
@@ -1231,12 +1732,11 @@ has a job running, and all working on one slug.
 |---|---|---|
 | 2 Extract | `frames/`, `masks/`, `analysis/`, `report/` | |
 | 3 SfM | `sfm/` — the workspace, the sparse models, `sfm_result.json`. **Not `masks/`**: they are step 2's or the mask run's, and an input to this step rather than an output of it | |
-| 4 Train | `train/` | |
+| 4 Train | `train/` — the run, `train/crop/` (the volume cut, §7.6b) **and** `train/export/` (the deliverable copies, §7.6c, sidecars included). All of it is derived from a splat this reset has just deleted. The volumes, the saved viewpoint (§7.6d) and the export plan live in `settings_json` and survive |  |
 | 5 Mesh | `mesh/`, `export/` | |
-| 6 Scene | | `export/scene.blend`, `export/README_SPLATFORGE.txt` |
 
-Step 1 is deliberately absent: it owns `input/`. Steps 5 and 6 share `export/` — 5 fills
-it, 6 adds the Blender scene — so resetting 5 necessarily takes 6 with it. `preview/`
+Step 1 is deliberately absent: it owns `input/`. Step 5 owns `export/` as well as `mesh/`
+— it meshes, then fills the drawer — so one reset takes both. `preview/`
 goes as soon as any step from 3 on is reset: it is built from those outputs and would
 otherwise show the previous run's cloud next to an empty directory.
 
@@ -1281,6 +1781,8 @@ channel **measured on this workstation**, or says it has none.
 | 2/3 masks | `spirula sam` stdout | `track` prints a per-frame counter; **`mask` prints two lines and no counter at all** — measured, 238 frames in 2.6 s, so its bar is its two ends |
 | 3 SfM | `spirula sfm auto` stdout, tagged and live (§7.2) | `[extract] N/total`, then `[map] images in the model: N` |
 | 4 geometry | `spirula geometry` stdout, `N / M images, T ms each, R left`; the **checkpoint download is a CR-redrawn `curl` bar** (§7.5), several hundred fragments per fetch, dropped from the bus and ridden as its own 0.02→0.20 stretch | per-image, 0.22→0.99 |
+| 4 crop | `step_crop`, one chunk of 262 144 gaussians per executor hop, empty message | gaussians, over two passes: 0.02→0.50 masking, 0.50→0.99 copying |
+| 4 export | `step_splat_export`, one chunk of 262 144 gaussians per executor hop, empty message; the three compressed formats add `splat-transform`'s lines and its **CR-redrawn k-means bar**, dropped from the bus (§7.6c) | gaussians over two passes — 0.02→0.99 native, or 0.02→0.70 then the conversion's 0.72→0.99 |
 | 4 train | the `step N/M` line, every 100 steps, CRLF, unbuffered (§7.7) | `N/M`, mapped onto 5–95 % |
 | 5 mesh | `spirula mesh` stdout, `[meshing] <phase>:` (§7.8) | `cameras rendered: N/total` inside each of the three camera loops; the other phases are named, not counted, and the ladder never moves backwards |
 

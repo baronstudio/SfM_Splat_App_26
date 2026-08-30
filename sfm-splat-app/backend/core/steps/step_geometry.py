@@ -48,14 +48,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from backend.core import colmap
+from backend.core.dataset_images import ImageJunction
 from backend.core.defaults import GeometryDefaults, load_defaults
 from backend.core.proc import ProcessAborted, iter_lines, release, spawn
 from backend.core.steps import spirula
@@ -88,10 +87,6 @@ _WARNING_LINE = re.compile(r"\bwarn(ing)?\b[: ]|can't fopen|cannot read", re.I)
 _P_START = 0.01
 _P_FETCH_START, _P_FETCH_END = 0.02, 0.20
 _P_WORK_START, _P_END = 0.22, 0.99
-
-# The image directory `geometry` insists on, relative to the dataset. Measured:
-# it resolves `<dataset>\images\<name>` and there is no flag that moves it.
-DATASET_IMAGE_DIRNAME = "images"
 
 
 def resolve_geometry_settings(settings: dict) -> GeometryDefaults:
@@ -174,72 +169,6 @@ def _classify(line: str) -> str:
     if _WARNING_LINE.search(line):
         return "WARNING"
     return "INFO"
-
-
-class _ImageJunction:
-    """`<dataset>/images` → `frames/`, for the length of one run and no longer.
-
-    `geometry` has no `--image-dir` and resolves `<dataset>\\images\\<name>`
-    (measured; see the module docstring), while §5.2's layout deliberately keeps
-    the one copy of the frames outside the dataset. A junction reconciles the two
-    without a second copy of the images — 226 MB on the reference project, tens
-    of gigabytes on a 4K one.
-
-    **It is created here and removed in `__exit__`**, so nothing else in the app
-    ever meets it: not `reset_steps`' `rmtree`, not the project copy's
-    `copytree`, not the archive's zip, not `colmap.find_model`. §5's layout on
-    disk stays exactly what §5 says it is, and the junction is an implementation
-    detail of one command rather than a new rule.
-
-    A junction needs neither administrator rights nor Developer Mode, unlike
-    `os.symlink` on Windows; POSIX gets a plain symlink, which needs neither
-    there.
-    """
-
-    def __init__(self, dataset_dir: Path, frames_dir: Path) -> None:
-        self.link = dataset_dir / DATASET_IMAGE_DIRNAME
-        self.frames_dir = frames_dir
-        self.created = False
-
-    @staticmethod
-    def _is_link(path: Path) -> bool:
-        # `os.path.isjunction` is 3.12+; 3.11 is supported (§3), so fall back to
-        # the symlink test rather than assuming the newer name is there.
-        is_junction = getattr(os.path, "isjunction", None)
-        return bool(is_junction and is_junction(path)) or os.path.islink(path)
-
-    def __enter__(self) -> "_ImageJunction":
-        if self.link.exists() or self._is_link(self.link):
-            if self._is_link(self.link):
-                # Left by a run that died before its `finally` — ours to reuse.
-                os.rmdir(self.link)
-            else:
-                # A real directory of that name is somebody's data, and this
-                # class only ever removes links. Refuse rather than delete.
-                raise FileExistsError(
-                    f"{self.link} already exists as a real directory. "
-                    "`spirula geometry` needs that name for a link to "
-                    f"{self.frames_dir}; move it aside and run this again."
-                )
-        if sys.platform == "win32":
-            import _winapi
-
-            _winapi.CreateJunction(str(self.frames_dir), str(self.link))
-        else:
-            os.symlink(str(self.frames_dir), str(self.link),
-                       target_is_directory=True)
-        self.created = True
-        return self
-
-    def __exit__(self, *_exc: Any) -> None:
-        if not self.created:
-            return
-        try:
-            # `os.rmdir` on a junction removes the link and leaves the target
-            # untouched — verified, because getting this wrong deletes `frames/`.
-            os.rmdir(self.link)
-        except OSError:
-            pass
 
 
 def _write_result(dataset_dir: Path, result: dict) -> None:
@@ -335,7 +264,7 @@ async def run_geometry(project_path: Path, broadcast_fn, settings: dict) -> dict
     # The junction exists only inside this block. `geometry` has no
     # `--image-dir`, so without it the run finds no images at all — and says so
     # while still exiting 0.
-    with _ImageJunction(dataset_dir, frames_dir) as junction:
+    with ImageJunction(dataset_dir, frames_dir) as junction:
         await broadcast_fn(
             "geometry", "INFO",
             f"[geometry] {junction.link.name}/ linked to frames/ for the length "

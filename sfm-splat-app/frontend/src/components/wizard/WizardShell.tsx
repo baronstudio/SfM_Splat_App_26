@@ -25,7 +25,6 @@ const Step2 = lazy(() => import('./steps/Step2_Extract'));
 const Step3 = lazy(() => import('./steps/Step3_Sfm'));
 const Step4 = lazy(() => import('./steps/Step4_Train'));
 const Step5 = lazy(() => import('./steps/Step5_Mesh'));
-const Step6 = lazy(() => import('./steps/Step6_Scene'));
 
 const STEP_COMPONENTS: Record<number, React.LazyExoticComponent<React.FC>> = {
   1: Step1,
@@ -33,7 +32,6 @@ const STEP_COMPONENTS: Record<number, React.LazyExoticComponent<React.FC>> = {
   3: Step3,
   4: Step4,
   5: Step5,
-  6: Step6,
 };
 
 const WizardShell: React.FC<{ onBackToHome?: () => void }> = ({ onBackToHome }) => {

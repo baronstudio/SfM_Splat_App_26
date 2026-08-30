@@ -88,7 +88,7 @@ const GeometrySettings: React.FC<GeometrySettingsProps> = ({ settings, onChange 
 
       <Row
         label="Checkpoint"
-        hint="Empty lets the build fetch its own on first use — moge2-vitb-normal.onnx, 419.4 MB, into its model cache. A path to an .onnx file is used as it is; a known id is fetched and cached. Larger is slower and only somewhat better."
+        hint="Empty lets the build fetch its own mid-run on first use — moge2-vitb-normal.onnx, 419.4 MB, over a curl child. Install it from Setup → Checkpoints instead and this holds its path, which never opens the network. A known id is also accepted and is fetched. Larger is slower and only somewhat better."
       >
         <Input
           value={settings.model}

@@ -377,13 +377,37 @@ class MeshDefaults(BaseModel):
 
 
 class ExportDefaults(BaseModel):
-    format: Literal["ply", "splat"] = "ply"
+    """The deliverable copy of a trained splat (CLAUDE.md §7.6c).
+
+    Every field bar `format` is a *reduction*, and every one of them ships off:
+    the default export is the trained splat byte for byte, in the trainer's own
+    format. "Give me the file" has to be one obvious setting rather than a
+    combination, and each knob below is then a deliberate act with a measured
+    cost printed next to it in the panel.
+
+    `opacity_min` in particular ships **0** on a measurement rather than on
+    caution. Spirula's gaussians are low-opacity by construction — median linear
+    alpha 0.059 under `--opacity-reg 0.01` against a 1 M cap — so the 1/255 floor
+    every other 3DGS toolchain ships as free housekeeping drops 1.2 % of the
+    reference file, and anything high enough to matter (43.2 % at 0.05) is an
+    edit of the picture, not a cleanup.
+    """
+
+    #: `ply` and `splat` are written here; `sog`, `spz` and `compressed-ply`
+    #: need `@playcanvas/splat-transform` (§10) and say so when it is absent.
+    format: Literal["ply", "splat", "sog", "spz", "compressed-ply"] = "ply"
+    #: Highest SH band to keep. None keeps whatever the trainer wrote; 0 drops
+    #: all 45 `f_rest_*` and 72.6 % of every vertex with them.
+    sh_degree: Optional[int] = None
+    #: Linear alpha floor, after the sigmoid. 0 keeps every gaussian.
+    opacity_min: float = 0.0
+    #: Target gaussian count. 0 keeps every one that survives the floor.
+    max_count: int = 0
+    #: How `max_count` chooses: `importance` is alpha x ellipsoid volume,
+    #: `uniform` is an even spread over the file.
+    selection: Literal["importance", "uniform"] = "importance"
+    #: Inherited, and left alone: step 5's `export/` naming, not this pass's.
     pattern: str = "{project}_{index:05d}"
-
-
-class BlenderDefaults(BaseModel):
-    scene_scale: float = 1.0
-    import_mode: str = "splatforge"
 
 
 class ViewerDefaults(BaseModel):
@@ -411,13 +435,12 @@ class AppDefaults(BaseModel):
     train: TrainDefaults = Field(default_factory=TrainDefaults)
     mesh: MeshDefaults = Field(default_factory=MeshDefaults)
     export: ExportDefaults = Field(default_factory=ExportDefaults)
-    blender: BlenderDefaults = Field(default_factory=BlenderDefaults)
     viewer: ViewerDefaults = Field(default_factory=ViewerDefaults)
 
 
 SECTIONS = (
     "extract", "curate", "sfm", "sam", "geometry", "train", "mesh",
-    "export", "blender", "viewer",
+    "export", "viewer",
 )
 
 

@@ -341,6 +341,11 @@ def _splat_count(splat: Optional[Path]) -> Optional[int]:
         return None
 
 
+# The same reading, for the panels: step 4's card, and the crop panel saying how
+# many gaussians the cut will run over before it runs (`api/routes/files.py`).
+splat_count = _splat_count
+
+
 def find_splat(train_dir: Path) -> Optional[Path]:
     """`train/run/step-%09d.ckpt/splat.ply` of the highest step, or None.
 

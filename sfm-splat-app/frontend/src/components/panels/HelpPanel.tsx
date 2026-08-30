@@ -8,7 +8,6 @@ const STEP_HELP_PAGES: Record<number, string> = {
   3: '/help/step3.html',
   4: '/help/step4.html',
   5: '/help/step5.html',
-  6: '/help/step6.html',
 };
 
 interface HelpPanelProps {

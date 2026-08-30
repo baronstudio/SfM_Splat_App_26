@@ -200,7 +200,7 @@ const MaskSettings: React.FC<MaskSettingsProps> = ({
 
           <Row
             label="Checkpoint"
-            hint="The .pt / .onnx file you downloaded. `sam track --model` takes a file, not a name to fetch."
+            hint="`sam track --model` takes a file, not a name to fetch — so this is a path. Install one from Setup → Checkpoints and it fills this in, with the licence it was accepted under; a path typed by hand works too."
           >
             <Input
               value={settings.model}

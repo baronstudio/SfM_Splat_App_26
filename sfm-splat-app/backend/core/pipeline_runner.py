@@ -4,10 +4,9 @@ pipeline_runner.py — Full orchestrator for the 3DGS pipeline.
 Step numbering:
   1  Import       (handled at project creation — skipped here)
   2  Extract      FFmpeg frame extraction, then curation (CLAUDE.md §6)
-  3  RC           RealityCapture alignment
-  4  LFS          LichtFeld Studio 3DGS training
-  5  Export       Copy PLY/splat to export/
-  6  Blender      SplatForge scene export
+  3  SfM          `spirula sfm auto` (CLAUDE.md §7.1)
+  4  Train        `spirula train` (CLAUDE.md §7.6)
+  5  Mesh         `spirula mesh`, then fill export/ (CLAUDE.md §7.8, §7.10)
 """
 
 import asyncio
@@ -26,13 +25,16 @@ from backend.core.steps.step_analyze import (
     resolve_curate_settings,
     run_analysis,
 )
+from backend.core.steps.step_crop import run_crop as _run_crop
 from backend.core.steps.step_export import run_export
 from backend.core.steps.step_extract import run_extract
 from backend.core.steps.step_geometry import run_geometry as _run_geometry
 from backend.core.steps.step_mesh import run_mesh
 from backend.core.steps.step_sam import run_masking as _run_masking
-from backend.core.steps.step_scene import run_blender
 from backend.core.steps.step_sfm import run_sfm
+from backend.core.steps.step_splat_export import (
+    run_splat_export as _run_splat_export,
+)
 from backend.core.steps.step_train import run_train
 from backend.db.database import engine
 from backend.models.project import Project
@@ -50,13 +52,16 @@ def _abort_checker(project_id: str):
     return lambda: bool(_abort_flags.get(project_id))
 
 
-# Two passes attach to a wizard step without being it: `spirula sam` reports as
-# `masks` into step 3 and `spirula geometry` as `geometry` into step 4. The
-# frontend store maps both, the same shape as `curate` reporting into step 2
-# (CLAUDE.md §12, 2026-08-20). Neither ever marks its step done — see
-# `_run_attached_pass`.
+# Four passes attach to a wizard step without being it: `spirula sam` reports
+# as `masks` into step 3, `spirula geometry` as `geometry` into step 4, the
+# volume crop as `crop` and the deliverable export as `splat_export`, both also
+# into step 4. The frontend store maps all four, the same shape as `curate`
+# reporting into step 2 (CLAUDE.md §12, 2026-08-20). None of them ever marks its
+# step done — see `_run_attached_pass`.
 MASK_STEP_NAME = "masks"
 GEOMETRY_STEP_NAME = "geometry"
+CROP_STEP_NAME = "crop"
+SPLAT_EXPORT_STEP_NAME = "splat_export"
 
 _STEP_NAMES: dict[int, str] = {
     1: "import",
@@ -64,7 +69,6 @@ _STEP_NAMES: dict[int, str] = {
     3: "sfm",
     4: "train",
     5: "mesh",
-    6: "scene",
 }
 
 
@@ -95,7 +99,7 @@ async def _run_extract_and_curate(
 async def _run_mesh_and_export(
     project_path: Path, broadcast_fn, settings: dict
 ) -> dict:
-    """Step 5 meshes, then fills `export/` - the two share a directory (§14.1)."""
+    """Step 5 meshes, then fills `export/`, and it is the last step (§7.10)."""
     result = await run_mesh(project_path, broadcast_fn, settings)
     result["export"] = await run_export(project_path, broadcast_fn, settings)
     return result
@@ -106,7 +110,6 @@ _STEP_RUNNERS = {
     3: run_sfm,
     4: run_train,
     5: _run_mesh_and_export,
-    6: run_blender,
 }
 
 # Steps that accept the abort predicate. The others predate it and check the
@@ -216,7 +219,7 @@ def _with_project_settings(project: Project, settings: dict) -> dict:
     """Overlay the request's settings onto the ones stored on the project.
 
     A run started from a wizard step sends the panel it has on screen, which is
-    the same thing — but a run started with `{}` (steps 5 and 6, or a call from
+    the same thing — but a run started with `{}` (step 5, or a call from
     anywhere but that step's own panel) would otherwise silently drop the whole
     per-project layer back onto the app defaults, which is precisely what
     CLAUDE.md §4's precedence forbids.
@@ -463,10 +466,10 @@ async def run_pipeline(
                 )
                 return
 
-        # ── Pipeline complete (only when the last step, Blender, finishes) ──────
-        if actual_start == 6:
+        # ── Pipeline complete (only when the last step, the mesh, finishes) ────
+        if actual_start == 5:
             _debug(f"  → Full pipeline complete for project {project_id}")
-            _update_project(project_id, current_step=6)
+            _update_project(project_id, current_step=5)
             await broadcast(
                 "pipeline", "SUCCESS",
                 f"🎉 Pipeline complete for project {project_id}",
@@ -675,4 +678,63 @@ async def run_geometry_only(project_id: str, settings: dict = {}) -> None:
         step=4, name=GEOMETRY_STEP_NAME, runner=_run_geometry,
         opening="▶ Estimating depth and normal maps with spirula geometry…",
         label="Geometry supervision",
+    )
+
+
+async def run_crop_only(project_id: str, settings: dict = {}) -> None:
+    """Cut the trained splat to the stored volumes, into `train/crop/` (§7.6b).
+
+    Attaches to wizard step 4, and is the third pass of that shape — but the
+    first whose abort is *only* the cooperative flag. `sam` and `geometry` are
+    subprocesses, so §2.6's tree kill is what unblocks their reader; this one is
+    numpy over a memory map in our own process, and nothing external can be
+    killed to stop it. `step_crop` checks the flag between chunks and raises the
+    same `ProcessAborted` the other two do, which is what `_run_attached_pass`
+    already reports as `aborted` rather than as an error.
+
+    Never a re-training, and never a rewrite of what the trainer produced: the
+    cut writes a second file and `resolve_splat` is what steps 5 and 6 ask.
+    """
+    should_abort = _abort_checker(project_id)
+
+    async def runner(project_path, broadcast_fn, resolved: dict):
+        return await _run_crop(
+            project_path, broadcast_fn, resolved, should_abort=should_abort,
+        )
+
+    await _run_attached_pass(
+        project_id, settings,
+        step=4, name=CROP_STEP_NAME, runner=runner,
+        opening="▶ Cutting the splat to the crop volumes…",
+        label="Splat crop",
+    )
+
+
+async def run_splat_export_only(project_id: str, settings: dict = {}) -> None:
+    """Write a deliverable copy of step 4's splat into `train/export/` (§7.6c).
+
+    The fourth pass of this shape and the first whose output **nothing in the
+    pipeline reads**. A crop is pipeline data — step 5 meshes it through
+    `resolve_splat` — whereas an export is terminal: it drops spherical
+    harmonics and quantises into formats no mesher reads, so it lives in
+    its own directory under a name neither `find_splat` nor `find_export_splat`
+    will ever match.
+
+    Its abort has both halves of the pattern in one pass: the native PLY and
+    `.splat` writers are numpy over a memory map and stop on the cooperative
+    flag, while the three compressed formats shell out to `splat-transform` and
+    stop on §2.6's tree kill. Both arrive here as `ProcessAborted`.
+    """
+    should_abort = _abort_checker(project_id)
+
+    async def runner(project_path, broadcast_fn, resolved: dict):
+        return await _run_splat_export(
+            project_path, broadcast_fn, resolved, should_abort=should_abort,
+        )
+
+    await _run_attached_pass(
+        project_id, settings,
+        step=4, name=SPLAT_EXPORT_STEP_NAME, runner=runner,
+        opening="▶ Exporting the splat…",
+        label="Splat export",
     )

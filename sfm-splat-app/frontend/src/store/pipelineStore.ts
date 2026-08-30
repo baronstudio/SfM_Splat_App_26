@@ -88,17 +88,21 @@ const stepNameToIndex: Record<StepName, number> = {
   // Curation is step 2's second phase, so it reports against the same step.
   curate: 2,
   sfm: 3,
-  // The `spirula sam` run attaches to step 3 and the `spirula geometry` run to
-  // step 4, the same shape as `curate` being step 2's second phase: both are
-  // separately re-runnable so a threshold change never costs the expensive
-  // phase (CLAUDE.md §7.4, §7.5).
+  // The `spirula sam` run attaches to step 3, and both the `spirula geometry`
+  // run and the splat crop attach to step 4 — the same shape as `curate` being
+  // step 2's second phase: each is separately re-runnable so a threshold change
+  // never costs the expensive phase (CLAUDE.md §7.4, §7.5, §7.6b).
   masks: 3,
   geometry: 4,
+  crop: 4,
+  // The deliverable export attaches to step 4 too (§7.6c), and is the one pass
+  // of the four whose output no later step reads.
+  splat_export: 4,
   train: 4,
-  // Step 5 meshes and then fills export/ — the two share a directory (§14.1).
+  // Step 5 meshes and then fills export/, its own delivery drawer (§7.10) —
+  // two progress names, one wizard step, and the last of them.
   mesh: 5,
   export: 5,
-  scene: 6,
 };
 
 // The training chart is fed by the trainer's own bar line, one every hundred
@@ -190,7 +194,7 @@ export const usePipelineStore = create<PipelineState>()(
     projects: [],
     currentProjectId: null,
 
-    stepStatuses: { 1: 'pending', 2: 'pending', 3: 'pending', 4: 'pending', 5: 'pending', 6: 'pending' },
+    stepStatuses: { 1: 'pending', 2: 'pending', 3: 'pending', 4: 'pending', 5: 'pending' },
     currentStep: 1,
     pipelineRunning: false,
 
@@ -300,17 +304,20 @@ export const usePipelineStore = create<PipelineState>()(
         const prevCurrentStep = state.currentStep;
 
         // Reset all steps to pending, then apply persisted statuses
-        state.stepStatuses = { 1: 'pending', 2: 'pending', 3: 'pending', 4: 'pending', 5: 'pending', 6: 'pending' };
+        state.stepStatuses = { 1: 'pending', 2: 'pending', 3: 'pending', 4: 'pending', 5: 'pending' };
         const saved = project.step_status as Record<string, string>;
         if (saved && typeof saved === 'object') {
           Object.entries(saved).forEach(([k, v]) => {
             const idx = parseInt(k, 10);
-            if (idx >= 1 && idx <= 6 && ['pending', 'running', 'done', 'error', 'aborted'].includes(v)) {
+            if (idx >= 1 && idx <= 5 && ['pending', 'running', 'done', 'error', 'aborted'].includes(v)) {
               state.stepStatuses[idx] = v as StepStatus;
             }
           });
         }
-        state.currentStep = Math.max(project.current_step, 1);
+        // Clamped to 5: the wizard lost its sixth step (Blender) on
+        // 2026-08-30, and a project row saved at `current_step: 6` before that
+        // would otherwise land on a step that has no component to render.
+        state.currentStep = Math.min(Math.max(project.current_step, 1), 5);
 
         // ── Debug log ──────────────────────────────────────────────────────
         console.debug(

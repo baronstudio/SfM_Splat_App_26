@@ -42,8 +42,8 @@
         "samples": 24,
         "dark": 16,
         "replace": false,
-        "model": "",
-        "model_licence": "",
+        "model": "C:\\Users\\jbbar\\AppData\\Local\\spirula-studio\\models\\sam3-q4_0.ggml",
+        "model_licence": "sam3",
         "text": "",
         "neg_text": "",
         "detect_every": 1,
@@ -107,11 +107,11 @@
     },
     "export": {
         "format": "ply",
+        "sh_degree": null,
+        "opacity_min": 0.0,
+        "max_count": 0,
+        "selection": "importance",
         "pattern": "{project}_{index:05d}"
-    },
-    "blender": {
-        "scene_scale": 1.0,
-        "import_mode": "splatforge"
     },
     "viewer": {
         "preview_max_points": 1000000,

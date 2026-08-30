@@ -62,6 +62,38 @@ export const usePipeline = () => {
     return response.data;
   };
 
+  /** Cut the trained splat to the stored crop volumes (§7.6b).
+   *
+   *  Not `/start`: it must not re-train. It writes `train/crop/splat.ply`
+   *  *beside* what the trainer produced and never over it, so re-running it is
+   *  free and clearing the volumes is a real undo — and this never marks step 4
+   *  done. Same guards and the same `_running_tasks` slot as the two above.
+   */
+  const runCrop = async (projectId: string, settings: object) => {
+    const response = await client.post('/pipeline/crop', {
+      project_id: projectId,
+      settings,
+    });
+    setPipelineRunning(true);
+    return response.data;
+  };
+
+  /** Write a deliverable copy of the trained splat (CLAUDE.md §7.6c).
+   *
+   *  Not `/start` and not `/crop`: it must not re-train, and — unlike the crop
+   *  — nothing in the pipeline reads what it writes. `train/export/` is a
+   *  drawer of files to download, so this can be re-run per format as often as
+   *  a different one is wanted without moving anything downstream.
+   */
+  const runSplatExport = async (projectId: string, settings: object) => {
+    const response = await client.post('/pipeline/export-splat', {
+      project_id: projectId,
+      settings,
+    });
+    setPipelineRunning(true);
+    return response.data;
+  };
+
   const fetchStatus = async (projectId: string) => {
     const response = await client.get('/pipeline/status', {
       params: { project_id: projectId },
@@ -69,7 +101,10 @@ export const usePipeline = () => {
     return response.data;
   };
 
-  return { startPipeline, controlPipeline, generateMasks, runGeometry, fetchStatus };
+  return {
+    startPipeline, controlPipeline, generateMasks, runGeometry, runCrop,
+    runSplatExport, fetchStatus,
+  };
 };
 
 export default usePipeline;

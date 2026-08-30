@@ -3,7 +3,7 @@
 Prioritised worklist. [CLAUDE.md](CLAUDE.md) is the spec; this is what comes next.
 Phases are ordered by what unblocks what, not by what is interesting.
 
-Status: **P1 done, P2 done bar step 6 and one browser pass, P3 done bar `sam track`.** A video goes in one end
+Status: **P1 done, P2 done bar one browser pass, P3 done bar `sam track`.** A video goes in one end
 and a `splat.ply` and a textured `mesh.glb` come out the other, from the UI, at real
 length, with the bar moving and abort working at every step. The P1.7 run: 79.5 s of
 4K/100 fps 10-bit HEVC → 238 frames in **80.4 s** → 238/238 registered at 0.341 px in
@@ -12,7 +12,37 @@ Step 5 on the throwaway project's 98 025-gaussian splat: **18.15 s**, 78 670 ver
 84 166 faces, a 4096 px texture at 26.8 % coverage, `mesh.glb` 11.6 MB, exit 0. P3 then
 shipped both re-runnable passes and settled three of P4's open questions on the way —
 `geometry` needs a junction, a mask pairs by basename, `--mask-dir` takes an absolute
-path. Next: **step 6**, which is still the one step never run since it was rewired.
+path. **Step 6 was removed on 2026-08-30** (CLAUDE.md §12): no Blender, no `scene.blend`,
+and the wizard ends at step 5's mesh and its `export/` drawer.
+
+**2026-08-30 — the splat crop shipped** (CLAUDE.md 7.6b): box and sphere volumes
+dragged over step 4's preview, keep or delete each, the excluded gaussians hidden
+live in the splat shader, and a backend pass that cuts the full `splat.ply` into
+`train/crop/splat.ply` for step 5 to read. Measured on the reference splat -
+574 817 gaussians cut to 441 084 in 0.46 s, 62 properties preserved byte for byte -
+and watched in a browser on the throwaway: 98 025 to 3 009 in 0.07 s, the live cut
+taking the canvas PNG down 89.5 % and back when toggled off, no console error.
+
+**2026-08-30 — the splat export shipped** (CLAUDE.md 7.6c): a deliverable copy of the
+trained splat in five formats, from a panel on step 4, with SH-degree reduction, an
+opacity floor and a target gaussian count. Measured on the 715 890-gaussian reference
+splat: SH 3→0 is **3.65x smaller in 0.29 s** and loses no geometry at all, since 72.6 %
+of every vertex is spherical harmonics. `@playcanvas/splat-transform` (MIT, optional,
+subprocess) adds `.sog` **20.6x**, `.spz` **16.5x** and `.compressed.ply` **4.0x**. It is
+the mirror of the crop: nothing in the pipeline reads `train/export/`.
+
+**2026-08-30 — the checkpoint manager shipped** (CLAUDE.md §7.4b): Setup → Checkpoints,
+a global panel section that installs the twelve neural checkpoints the `sam` and
+`geometry` tools want. The catalogue — filenames, URLs and sha256 — is **read out of
+`spirula.exe` itself**, verified against a file a real run had already fetched
+(`bbf14e07…` over 419 411 850 bytes, exact). It resumes, sharing spirula's own `.part`
+convention: its abandoned 1.2 MB `moge2-vitl` part grew to 22 204 416, survived a
+Cancel, and the next Download **resumed at 22 204 416 rather than 0**. `sam2.1-tiny`
+installed whole in 14.2 s. Four licences, four separate acceptances, gated in the panel
+and re-checked in the route. §13.5's audit came back CC0-1.0 for Metric3D and unclean
+for the MoGe mirrors, so that question shrinks rather than closes. Found on the way: the
+**first-run screen could never be got past on a fresh install** — it gated Proceed on
+the two removed CUDA tools' config keys.
 
 ---
 
@@ -54,7 +84,8 @@ video goes in one end and a `splat.ply` comes out the other.
 - [x] `core/steps/spirula.py`, `core/colmap.py` — the latter validated against a real
       300-image `sparse/0` written by step 3, so P1.5's parser is already proven.
 - [x] **Frontend builds with steps 3-6 as empty shells.** `Step3_RC.tsx` and
-      `Step4_LFS.tsx` are deleted; `Step4_Train`, `Step5_Mesh`, `Step6_Scene` are
+      `Step4_LFS.tsx` are deleted; `Step4_Train`, `Step5_Mesh` and the since-removed
+      `Step6_Scene` were
       placeholders that render their step name and nothing else. `RCSettings.tsx` /
       `LFSSettings.tsx` are gone. `StepNav`'s labels were still "RS Alignment" and
       "LFS Training" until P1.5 — the wizard named two tools this app does not have.
@@ -74,8 +105,8 @@ video goes in one end and a `splat.ply` comes out the other.
       path in Settings and read `rc_output/`, step 4 is "LFS — Gaussian Splat Training".
       Seen in the P1.7 browser pass, beside a step 3 panel correctly reporting a spirula
       run. Same commit should take the app's own name: `version.APP_NAME`,
-      `AppTitle.tsx`'s fallback, `public/help/`, `requirements.txt` and
-      `step_scene.py`'s export README all still say "3DGS Pipeline App".
+      `AppTitle.tsx`'s fallback, `public/help/` and `requirements.txt` all still say
+      "3DGS Pipeline App".
 
 ### P1.2 Steps 1 and 2 work unchanged
 
@@ -236,7 +267,7 @@ delete it from the Projects list when its evidence has been read.**
 
 ---
 
-## P2 — Mesh and scene (steps 5-6)
+## P2 — Mesh and delivery (step 5)
 
 ### P2.1 Step 5 — `step_mesh.py` ✅
 
@@ -278,18 +309,19 @@ delete it from the Projects list when its evidence has been read.**
       ambient, `DoubleSide`, a wireframe toggle, no level selector.
 - [x] `.glb` and `.gltf` registered as `model/gltf-binary` / `model/gltf+json`.
 
-### P2.3 `export/` and step 6
+### P2.3 `export/`
 
 - [x] `step_export.py` rewired off the dead `lfs_output/`: it takes step 4's `splat.ply`
       and step 5's `mesh/` outputs and **hard-links** them into `export/` (verified
       `nlink 2`). It no longer resets step 5 — `run_mesh` already did, and a second reset
       would delete the mesh it is exporting.
-- [x] `step_scene.py`: `find_export_splat` instead of `glob("*.ply")[0]`, which would have
-      handed Blender `mesh.ply` to import as a gaussian cloud; and the README's
-      `{supersplat_url}` placeholder removed, which raised `AttributeError` on every step 6
-      after Blender had already run.
-- [ ] **Step 6 has not been run since.** Both fixes above are on its path and neither has
-      been exercised against a real Blender. That is the next thing.
+- [x] **Step 6 deleted, 2026-08-30 — JB's call** (CLAUDE.md §12). `step_scene.py`,
+      `blender_splatforge.py`, `Step6_Scene.tsx` and `help/step6.html` are gone, with
+      `blender_exe_path` out of `config.json`, the `blender` section out of
+      `defaults.json` and the Blender row struck from §10. `export/` is step 5's alone,
+      so §14.1 loses its sixth row. `find_export_splat` stays: it is what
+      `/api/files/{id}/export` labels the drawer with, and `mesh.ply` still sorts before
+      `splat.ply`.
 - [ ] `ExportDefaults.format` / `.pattern` are shown in the setup panel and read by
       nothing. Either make export honour them or delete the section.
 
@@ -391,3 +423,45 @@ In the order they block something. See CLAUDE.md §13.
 - The `--progress-dir` binary channel, until the stdout bar works (§13.5).
 - Modelling `sfm`'s five individual stages. Worth remembering the day a reconstruction
   fails and nobody can tell which stage lost it (§13.6), not worth building now.
+
+---
+
+## P6 — Real splat optimisation (research, not scheduled)
+
+Everything in §7.6c reduces a splat by **throwing rows or columns away**, which is
+cheap, exact and honest about what it costs. None of it *optimises* anything: after
+a cut nothing is re-fitted, so a deep target thins the picture rather than
+simplifying it. The three techniques that would actually simplify it all need a
+differentiable rasteriser in the loop — i.e. a trainer — and none of them is
+scheduled. Recorded here so the next session knows they were considered and why
+they are not in `core/splat_export.py`.
+
+- [ ] **Prune-then-finetune.** The standard result (LightGaussian, Compact3D): score
+      each gaussian by how much it actually contributes — opacity × projected area ×
+      **how often a training ray hits it** — prune hard, then train a few thousand
+      more iterations so the survivors absorb what the pruned ones were doing. The
+      hit count is the part we cannot compute: it needs the rasteriser, over the
+      training cameras. Our `importance` is α × ellipsoid volume, which is the same
+      idea with the third term dropped, and the panel says so.
+      **What it would take here:** `spirula train --resume` exists (§7.6's
+      `[Run & Output]`), so the finetune half is reachable — but there is no way to
+      hand the trainer an externally pruned checkpoint, and writing one would mean
+      reproducing its `state.tar` layout. Open question before any of this: does
+      `--resume` accept a checkpoint whose splat count changed?
+- [ ] **SH distillation.** Rather than dropping bands (§7.6c's 3.65× at degree 0),
+      re-fit a degree-0 or degree-1 model against renders of the full one, so the DC
+      term absorbs the mean of what the higher bands were contributing. Same cost
+      shape as above and the same blocker. Worth it only if the measured quality gap
+      of a plain band drop turns out to matter — and **that has not been looked at**:
+      the RMS of the reference splat's coefficients *rises* with degree (deg1 0.069 →
+      deg3 0.100), so SH is carrying real signal here and the drop is not free.
+- [ ] **Vector quantisation of the SH block.** A learned codebook over the 45
+      coefficients, indices instead of floats. This one is **already done for us**:
+      it is exactly what `.sog` does with k-means (measured 20.6×, the 2.6 s of that
+      run's 4.7 s), so the case for implementing it is thin unless a *PLY* carrying
+      a codebook is ever wanted.
+- [ ] **The measurement that would settle all three**, and the cheap one to do first:
+      render the same view from the full splat and from each reduction, and put a
+      PSNR next to every row of §7.6c's table. Everything above is a guess about
+      quality until that exists; every number in this file today is a size and a
+      duration.

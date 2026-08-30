@@ -340,6 +340,37 @@ def _finalise(tmp: Path, dst: Path) -> None:
     )
 
 
+# Two of the helpers above are useful to a module that reads or writes a PLY
+# without converting one - `core/crop.py` copies kept records verbatim rather
+# than re-encoding them, so it wants the memmap and the rename-with-retries and
+# none of the decimation between them.
+
+def memmap(path: Path, header: PlyHeader) -> np.ndarray:
+    """The vertex block of `path` as a structured array, without loading it."""
+    return _memmap(path, header)
+
+
+def finalise(tmp: Path, dst: Path) -> None:
+    """Move a finished `.part` onto its final name, retrying a held handle."""
+    _finalise(tmp, dst)
+
+
+#: The gaussian columns the 32-byte record is built from, in the order
+#: `encode_splat` expects them. Public because `core/splat_export.py` writes the
+#: same record for a `.splat` *export* rather than for a preview, and the two
+#: must not drift into two ideas of what a splat record is.
+SPLAT_FIELDS = _SPLAT_FIELDS
+
+
+def encode_splat(cols: dict[str, np.ndarray]) -> bytes:
+    """Gaussian columns -> the 32-byte `.splat` record.
+
+    The preview path reaches this through `convert_ply`; the export path builds
+    its own row selection first and then asks for the same encoding.
+    """
+    return _encode_splat(cols)
+
+
 def convert_ply(
     src: Path, dst: Path, max_count: Optional[int] = None,
     progress: Optional[ProgressFn] = None,
