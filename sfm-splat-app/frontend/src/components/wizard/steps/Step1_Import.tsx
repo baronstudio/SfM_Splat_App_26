@@ -6,6 +6,7 @@ import { useProjects } from '@/hooks/useProjects';
 import apiClient from '@/api/client';
 import { ProjectList } from '@/components/projects/ProjectList';
 import { ImageSetImport } from '@/components/panels/ImageSetImport';
+import type { Project } from '@/types';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -35,7 +36,7 @@ interface InputFile {
 // Sub-component: manage sources for an existing project
 // ---------------------------------------------------------------------------
 const ManageSources: React.FC = () => {
-  const { currentProjectId, projects, stepStatuses, setCurrentStep, confirmStep } = usePipelineStore();
+  const { currentProjectId, projects, setCurrentStep, confirmStep, upsertProject } = usePipelineStore();
   const currentProject = projects.find((p) => p.id === currentProjectId);
 
   const [files, setFiles] = useState<InputFile[]>([]);
@@ -153,14 +154,15 @@ const ManageSources: React.FC = () => {
     confirmStep(1);
     setCurrentStep(2);
     if (currentProjectId) {
-      const statusForApi: Record<string, string> = {};
-      Object.entries(stepStatuses).forEach(([k, v]) => { statusForApi[k] = v; });
-      statusForApi['1'] = 'done';
+      // Only step 1 is authored here: the rest of the dict is whatever the
+      // backend already holds. Sending the in-memory copy of every step is how
+      // a fresh project inherited the previous one's green ticks.
       try {
-        await apiClient.put(`/projects/${currentProjectId}`, {
-          step_status: statusForApi,
+        const res = await apiClient.put<Project>(`/projects/${currentProjectId}`, {
+          step_status: { ...(currentProject?.step_status ?? {}), '1': 'done' },
           current_step: 2,
         });
+        upsertProject(res.data);
       } catch {
         // non-blocking — navigation already happened
       }
@@ -310,7 +312,7 @@ const ManageSources: React.FC = () => {
 // Sub-component: create a new project
 // ---------------------------------------------------------------------------
 const CreateProject: React.FC = () => {
-  const { projects, setCurrentProject, setCurrentStep } = usePipelineStore();
+  const { projects, setCurrentProject, setCurrentStep, confirmStep, upsertProject } = usePipelineStore();
   const { createProject } = useProjects();
 
   const [droppedFile, setDroppedFile] = useState<File | null>(null);
@@ -382,6 +384,20 @@ const CreateProject: React.FC = () => {
         );
       }
       setCurrentProject(project.id);
+      if (droppedFile) {
+        // The wizard skips step 1's own Validate button on this path, so the
+        // row would keep `1: pending` for a project whose source is on disk.
+        try {
+          const res = await apiClient.put<Project>(`/projects/${project.id}`, {
+            step_status: { ...project.step_status, '1': 'done' },
+            current_step: 2,
+          });
+          upsertProject(res.data);
+        } catch {
+          // non-blocking — the source is uploaded either way
+        }
+        confirmStep(1);
+      }
       setCurrentStep(2);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to create project';

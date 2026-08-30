@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { usePipelineStore } from '../store/pipelineStore';
+import { usePipelineStore, stepNameToIndex } from '../store/pipelineStore';
 import apiClient from '../api/client';
-import type { WsMessage } from '../types';
+import type { Project, StepName, WsMessage } from '../types';
 
 const WS_URL = 'ws://localhost:8000/ws/logs';
 const MAX_RETRIES = 5;
@@ -57,19 +57,32 @@ export const useWebSocket = () => {
 
         usePipelineStore.getState().handleWsMessage(msg);
 
-        // After a step finishes (success or error), persist step_status + current_step to the backend
+        // After a step finishes (success or error), persist its status and the
+        // wizard position. **Only the step this message is about is written**,
+        // merged onto the row the backend already holds — the whole in-memory
+        // dict used to go out, which turned any staleness in the store into DB
+        // truth for a project that had never run those steps (see
+        // `setCurrentProject`). The row is the authority for every other step:
+        // an attached pass restores the step it borrowed (§7.4, §7.5), and a
+        // reset pops keys, neither of which this event knows about.
         if (msg.type === 'status' && (msg.level === 'SUCCESS' || msg.level === 'ERROR')) {
           const state = usePipelineStore.getState();
           const projectId = state.currentProjectId;
-          if (projectId) {
-            const stepStatusDict: Record<string, string> = {};
-            Object.entries(state.stepStatuses).forEach(([k, v]) => {
-              stepStatusDict[k] = v;
-            });
-            apiClient.put(`/projects/${projectId}`, {
+          const stepIdx = stepNameToIndex[msg.step as StepName];
+          if (projectId && stepIdx !== undefined) {
+            const persisted = state.projects.find((p) => p.id === projectId)?.step_status ?? {};
+            const stepStatusDict: Record<string, string> = {
+              ...persisted,
+              [String(stepIdx)]: state.stepStatuses[stepIdx],
+            };
+            apiClient.put<Project>(`/projects/${projectId}`, {
               step_status: stepStatusDict,
               current_step: state.currentStep,
-            }).catch(() => { /* persistence is best-effort */ });
+            })
+              // Keep the local row in step with what was just written, or the
+              // next merge would start from a stale copy of it.
+              .then((res) => usePipelineStore.getState().upsertProject(res.data))
+              .catch(() => { /* persistence is best-effort */ });
           }
         }
       } catch {

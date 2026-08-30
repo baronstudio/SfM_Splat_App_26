@@ -83,7 +83,7 @@ interface PipelineState {
   handleWsMessage: (msg: WsMessage) => void;
 }
 
-const stepNameToIndex: Record<StepName, number> = {
+export const stepNameToIndex: Record<StepName, number> = {
   extract: 2,
   // Curation is step 2's second phase, so it reports against the same step.
   curate: 2,
@@ -228,7 +228,26 @@ export const usePipelineStore = create<PipelineState>()(
       }),
 
     setCurrentProject: (id) =>
-      set((state) => { state.currentProjectId = id; }),
+      set((state) => {
+        // Changing project forgets everything that described the previous one.
+        // `stepStatuses` is per-project state living in a store that outlives
+        // every project, and only `hydrateFromProject` ever cleared it — which
+        // the three *creation* paths do not call, because a brand-new row has
+        // nothing to hydrate from. So a project created after a finished one
+        // inherited its five green ticks, and worse, `useWebSocket` then wrote
+        // that inherited dict into the new row the first time any step
+        // reported: measured in `pipeline.db`, a project created 2026-08-30 and
+        // extracted once was persisted `{"2":"done","3":"done","4":"done",
+        // "5":"done"}` with `current_step: 2`.
+        if (state.currentProjectId === id) return;
+        state.currentProjectId = id;
+        state.stepStatuses = { 1: 'pending', 2: 'pending', 3: 'pending', 4: 'pending', 5: 'pending' };
+        state.stepProgress = {};
+        state.trainMetrics = [];
+        state.exportFiles = [];
+        state.pipelineRunning = false;
+        state.currentStep = 1;
+      }),
 
     // Project operation actions. The modal is opened by the request that starts
     // the work and closed by the one that finishes it; what happens in between
