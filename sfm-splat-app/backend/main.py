@@ -44,9 +44,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# The frontend talks to its own origin through the dev server's proxy, so the
+# normal path raises no CORS question at all. The regex is for the other one:
+# on the LAN staging box (start.bat) somebody will sooner or later point a
+# browser straight at :8000, or serve the built bundle from another port. It
+# admits the loopback and the three private IPv4 ranges only - a public origin
+# still gets nothing, because CLAUDE.md §1 keeps "no VPS / remote deployment".
+_LAN_ORIGIN = (
+    r"^https?://("
+    r"localhost"
+    r"|127\.\d+\.\d+\.\d+"
+    r"|10\.\d+\.\d+\.\d+"
+    r"|192\.168\.\d+\.\d+"
+    r"|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+"
+    r"|[A-Za-z0-9-]+(\.local)?"
+    r")(:\d+)?$"
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origin_regex=_LAN_ORIGIN,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -3,7 +3,19 @@ import { usePipelineStore, stepNameToIndex } from '../store/pipelineStore';
 import apiClient from '../api/client';
 import type { Project, StepName, WsMessage } from '../types';
 
-const WS_URL = 'ws://localhost:8000/ws/logs';
+/**
+ * Same origin as the page, for the reason `api/client.ts` carries: an absolute
+ * `ws://localhost:8000` opens a socket on the *viewer's* machine, so the
+ * LiveLog and every progress bar are dead for anyone but the operator sitting
+ * at the server. Vite proxies `/ws` (vite.config.ts), and `wss:` follows
+ * automatically if the page is ever served over TLS.
+ */
+const WS_URL = (() => {
+  const base = import.meta.env.VITE_WS_BASE;
+  if (base) return `${base.replace(/\/$/, '')}/ws/logs`;
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/ws/logs`;
+})();
 const MAX_RETRIES = 5;
 
 export const useWebSocket = () => {

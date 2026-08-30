@@ -38,17 +38,30 @@ export default defineConfig({
     ],
   },
   server: {
+    // Listen on every interface, so the staging box on the LAN is reachable by
+    // its address instead of only from its own console. `start.bat` passes
+    // --host as well; this is the default for anyone who runs `npm run dev`
+    // by hand. Nothing here is an invitation to the internet - CLAUDE.md §1's
+    // "no VPS / remote deployment" still stands, this is one trusted subnet.
+    host: true,
+    // Vite 5.4 rejects a request whose Host header is a name it does not know
+    // (an IP is always allowed). The staging box is likely to be reached by its
+    // Windows hostname, and the failure is an opaque "Blocked request".
+    allowedHosts: true,
     proxy: {
+      // The proxy runs on the server, so its targets stay on the loopback: the
+      // browser talks to this origin only, which is what lets `api/client.ts`
+      // and `useWebSocket.ts` be same-origin and host-agnostic.
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
       '/static': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:8000',
+        target: 'ws://127.0.0.1:8000',
         ws: true,
       },
     },
