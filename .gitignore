@@ -29,3 +29,6 @@ imgui.ini
 
 # SQLite project registry: one machine's state, rebuilt on first run.
 sfm-splat-app/pipeline.db
+
+# Editor scaffold: one machine, and it carries no project setting.
+*.code-workspace
