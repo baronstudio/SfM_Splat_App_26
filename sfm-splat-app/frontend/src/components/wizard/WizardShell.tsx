@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import StepNav from './StepNav';
 import LiveLog from '@/components/panels/LiveLog';
+import HardwareGauges from '@/components/panels/HardwareGauges';
 import HelpPanel from '@/components/panels/HelpPanel';
 import AppSetupPanel from '@/components/settings/AppSetupPanel';
 import ProjectOperationDialog from '@/components/projects/ProjectOperationDialog';
@@ -189,9 +190,17 @@ const WizardShell: React.FC<{ onBackToHome?: () => void }> = ({ onBackToHome }) 
         {/* MAIN ROW: left nav + center content + right help */}
         <div className="flex flex-1 overflow-hidden">
           {/* LEFT: Step navigator */}
-          <aside className="w-[200px] shrink-0 border-r border-slate-700 overflow-y-auto">
-            <StepNav />
-            <ProjectInfoPanel />
+          {/* The navigator scrolls; the gauges are pinned under it. They
+              describe the machine rather than the project, so they stay put
+              while the step content changes — which is the point, since what
+              they are for is watching a run that has taken the user somewhere
+              else in the wizard. */}
+          <aside className="w-[200px] shrink-0 border-r border-slate-700 flex flex-col overflow-hidden">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden">
+              <StepNav />
+              <ProjectInfoPanel />
+            </div>
+            <HardwareGauges />
           </aside>
 
           {/* CENTER: Current step content */}

@@ -160,11 +160,84 @@ button (§4 above).
 `SECTIONS` is `extract, curate, sfm, sam, geometry, train, mesh, export, viewer`.
 
 The setup panel is opened by the **gear icon in the WizardShell top bar**, and it
-carries two more sections that are not `defaults.json` sections at all, because
-neither is a business default: **Tools** is layer 1 above, and **Checkpoints**
-(§7.4b) is the neural weights installed on this machine. Both are properties of
-the installation, which is why they are here and not on a wizard step — asking
-for a checkpoint from inside step 3 would ask the same question once per project.
+carries three more sections that are not `defaults.json` sections at all, because
+none of them is a business default: **Tools** is layer 1 above, **Checkpoints**
+(§7.4b) is the neural weights installed on this machine, and **Hardware**
+(§4.1) is the machine itself. All three are properties of the installation,
+which is why they are here and not on a wizard step — asking for a checkpoint
+from inside step 3 would ask the same question once per project.
+
+**Hardware is a fourth thing again: it is not a layer at all, because there is
+nothing in it to set.** Tools and Checkpoints are installation *state* — a path
+somebody typed, a file somebody fetched — and both have a Save. Hardware is
+read-only from end to end, so it has no draft, no Save button and no factory
+reset, and the footer's save indicator is hidden under it rather than reporting
+"Saved" about a section that cannot be.
+
+### 4.1 The hardware panel and the sidebar gauges
+
+What this workstation is, and what it is doing. `backend/core/hardware.py`
+reads it; **Setup → Hardware** draws the whole of it, and a compact strip of
+gauges under the step navigator draws the live half on every step.
+
+**It costs no new dependency, which is §2.1 and the reason it is ctypes and
+`winreg` rather than three lines of `psutil`.** Everything is a documented
+Windows facility: `GetSystemTimes` for CPU load (0.26 ms), `GlobalMemoryStatusEx`
+for RAM (0.02 ms), `GetLogicalProcessorInformationEx` for physical cores, the
+DirectX and display-class registries for adapter names, VRAM and driver
+versions (1.5 ms), and **PDH performance counters** for live GPU utilisation and
+VRAM (1.4 ms). A poll of the whole live payload measured **1.4 ms** in-process
+and 5.5–23 ms over HTTP, which is what makes a one-second gauge affordable
+beside a 956-second training run.
+
+**PDH rather than `nvidia-smi`, and that is §1 rather than a preference.** This
+app exists because spirula is Vulkan and runs on Intel, AMD and Apple silicon;
+a panel that could only gauge the NVIDIA card would contradict the project on
+its own setup screen. One PDH counter reports **both** GPUs in this machine
+through one code path. `nvidia-smi` was used only to check the numbers, and it
+checked out: PDH's dedicated usage read **960.4 MB against its 955 MB** for the
+same adapter. **Utilisation deliberately does not match and must not be claimed
+to** — `nvidia-smi`'s is an instantaneous sample, PDH's is an average over the
+interval between two collections, so three simultaneous readings answered
+51/22/46 % against 25.9/20.4/27.9 %. They track the same load and disagree by
+construction; the averaged one is what a gauge should draw.
+
+Four findings that shape the code rather than decorate it:
+
+- **An integrated GPU's VRAM is *shared*, not dedicated.** The UHD 770 reports a
+  **128 MB** stub of dedicated memory against **12 142 MB** of shared system
+  memory — which is also what `spirula sam devices` calls its "11.9 G". So the
+  gauge divides by the *dedicated* pool for a discrete part and the *shared* one
+  for an integrated part, and says which; the naive reading would peg the Intel
+  card at a full bar the moment anything drew a window.
+- **The DirectX registry accumulates stale adapters.** A driver update writes a
+  new LUID key and never removes the old one: **six keys here for three live
+  adapters**, four of them the same Intel UHD 770 sharing its name and therefore
+  its driver version. **PDH is the filter** — an adapter Windows reports no
+  counter for does not exist any more — and the registry is only the name
+  lookup. Caught in the browser rather than in the payload: the first panel drew
+  the same Intel card four times.
+- **Utilisation is the *max* over engine types, never the sum.** The counter is
+  per process *and* per engine (`3D`, `Compute`, `Copy`, `VideoDecode`), and
+  adding them counts a decode and a draw as 200 %. Summing per engine type and
+  taking the largest is what Task Manager reports. The per-engine breakdown is
+  kept and shown, because it is what tells FFmpeg's `-hwaccel` decode (§6.1)
+  apart from a training run.
+- **One poller for the page, not one per component.** The panel and the sidebar
+  strip want the same tick, and the backend keeps **one** PDH query whose
+  reading is the delta since whoever polled last — so two independent
+  `setInterval`s would each have averaged over half the interval and disagreed
+  with each other. `useHardware.ts` holds the timer, the last sample and the
+  subscriber list, and stops entirely when nothing is mounted or the tab is
+  hidden. Same lesson as the two-sockets bug of §12 (2026-08-28), one hook
+  along.
+
+**The gauges are read-only and say so by never inventing a number.** A reading
+with no value yet — the first poll has no interval to average the CPU over — is
+drawn `—` rather than 0 %. Colour is keyed to meaning and not to magnitude: cyan
+while ordinary, amber past 75 %, red past 90 %, because a GPU pinned at 100 %
+through a training run is the tool working and should not shout, while memory
+about to run out should.
 
 ---
 
@@ -1513,6 +1586,11 @@ POST   /api/models/{id}/use            point defaults.json's sam/geometry `model
 DELETE /api/models/{id}                remove its files from the cache
 GET    /api/models/in-use              which checkpoint each family's default names
 GET    /api/version/                   app name, version (commit date + commit count) and commit id
+GET    /api/hardware/                  CPU, memory, graphics adapters and spirula's Vulkan
+                                       verdict on them (§4.1). Cached per process; ?refresh=1
+                                       re-reads it, including the `sam devices` subprocess
+GET    /api/hardware/live              one gauge tick: CPU %, RAM, per-adapter GPU % and VRAM.
+                                       Measured at 1.4 ms, which is what makes it pollable
 GET    /api/files/{project}/frames     frame list + curation verdicts
 GET    /api/files/{project}/analysis   scores.json + selection.json + overrides
 GET    /api/files/{project}/sources    input/ listing: probe + poster frame per video
@@ -1661,6 +1739,8 @@ Any new dependency → add a row here in the same commit.
 | 2026-08-30 | **The app is exposed on the LAN by binding one port, and what that took was deleting the hardcoded `localhost` §1 already forbade.** JB asked for a staging box on the local network. `start.bat` binding `0.0.0.0` was the easy half and would have been useless on its own: `api/client.ts` carried `baseURL: 'http://localhost:8000/api'` and `useWebSocket.ts` carried `ws://localhost:8000/ws/logs`, so a browser on **another** machine asked *its own* localhost for the API and got nothing — §1's "no hardcoded `localhost` in the frontend API client — it talks to its own origin" written as law and not implemented. Both are now same-origin (`/api`, and `ws(s)://<location.host>/ws/logs`), which the Vite proxy already routed, so **only the UI port has to be reachable**: the proxy runs on the server and its targets moved to `127.0.0.1`, and the backend needs no LAN listener at all for the normal path. Measured end to end from the LAN address rather than from the console: the page **200**, the page under a *hostname* Host header **200** (Vite 5.4 refuses an unknown name with an opaque "Blocked request", hence `allowedHosts`), `/api/version/` through the proxy **200 with the real payload**, and the `/ws/logs` upgrade **101** — the last one being the whole LiveLog and every progress bar. CORS moved from two literal origins to a regex over loopback plus the three private IPv4 ranges plus a dotless hostname, for the person who points a browser straight at :8000: measured, `http://192.168.1.50:5173` is echoed back and `https://attacker.io` gets **400 and no header**. **§1's "no VPS / remote deployment" is untouched** — this is one trusted subnet, the app still has no auth and still runs local binaries and reads server-side folders on request, and `start.bat` says exactly that next to the URL it prints. That banner names the IPv4 of the interface **that has a default gateway**, not the first one `ipconfig` lists: this workstation answers `192.168.56.1` first, a VirtualBox host-only adapter, which is a URL that looks right and works from exactly one machine. `start.bat 127.0.0.1` puts it back to private, and `--strictPort` refuses to slide to 5174, because a staging URL handed to somebody else has to keep working. |
 
 | 2026-09-01 | **A project carries two free-text fields the pipeline never reads, and they are columns rather than settings.** JB asked for a footage author and a description on each project. `settings_json` was the wrong home for both: §4 layer 3 is per-step overrides of a `defaults.json` section, and neither of these has a section to override — the crop volumes and the saved viewpoint are already the two deliberate exceptions and a third would make the exception the rule. So `footage_author` and `description` are columns on `project`, added through the one-`ALTER`-each migration `database.py` already carries for `archived_at` / `archive_path`, and `copy_project` clones them with the rest of the row. **Only the author is on the tile**, on the project name's own line, because a tile that carries a paragraph stops being a list; the description and the full recap live in a collapsible **Project info** section under the step navigator, which is where they are the same two questions whatever step is open. It saves on every change like every other layer-3 panel — debounced, flushed on unmount, on a project switch and on `beforeunload`, with the `SaveState` hint standing in for the Save button that does not exist. `relativeDate` / `absoluteDate` moved out of `ProjectList` into `lib/dates.ts` so the panel and the tile cannot drift on the UTC stamp the backend does not send. |
+
+| 2026-09-01 | **The setup panel gains a Hardware section and the step navigator gains live gauges, and the whole thing costs no dependency.** JB asked for the CPU and GPU information in the global setup panel, and for small coloured CPU / GPU / VRAM gauges at the foot of the left panel. The obvious implementation is `psutil` plus `nvidia-smi`, and both were refused: §2.1 makes every dependency a §10 row, and **`nvidia-smi` can only see the NVIDIA card**, which would contradict §1 — the reason this project exists is that spirula is Vulkan and runs on Intel, AMD and Apple silicon — on the very screen that shows off the hardware. Everything is therefore a documented Windows facility read through `ctypes` and `winreg`: `GetSystemTimes` (0.26 ms), `GlobalMemoryStatusEx` (0.02 ms), `GetLogicalProcessorInformationEx`, the DirectX and display-class registries (1.5 ms), and **PDH performance counters** for GPU utilisation and VRAM. One PDH counter reports **both** GPUs in this machine through one path, and the whole live payload samples in **1.4 ms** in-process, 5.5–23 ms over HTTP — affordable once a second beside a 956-second training run. `nvidia-smi` was used only as the check, and the check passed on memory: PDH read **960.4 MB against its 955 MB** on the same adapter. **Utilisation was deliberately not claimed to match**, because it cannot: `nvidia-smi` samples instantaneously and PDH averages over the interval between collections, so three simultaneous readings answered 51/22/46 % against 25.9/20.4/27.9 %. Four things the measurements forced. **An integrated GPU's VRAM is shared** — the UHD 770 reports a 128 MB dedicated stub against 12 142 MB shared, which is also what `sam devices` calls its "11.9 G" — so the gauge divides by the right pool and names it, or the Intel bar sits full. **The DirectX registry keeps a key per driver install and never removes the old one**: six keys for three live adapters, four of them the same Intel part sharing its name *and* its driver version, so PDH's live counters are the filter and the registry is only the name lookup — caught in a browser, where the first panel drew the same card four times, and not in any payload. **Utilisation is the max over engine types and never the sum**, or a decode plus a draw reads 200 %; the per-engine breakdown is kept because it is what tells §6.1's `-hwaccel` decode apart from a training run. And **one poller serves the whole page**: the backend holds a single PDH query whose reading is the delta since the last poll, so two independent timers would each have averaged over half the interval and disagreed — `useHardware.ts` owns the timer and stops when nothing is mounted or the tab is hidden, which is §12's two-sockets bug (2026-08-28) one hook along. The panel is read-only end to end, so it has no Save, no reset and no save indicator; a value not yet measured draws `—` and never 0 %. Driven headed in a browser: gauges live and moving, both GPUs drawn, **no console error**. |
 
 Any new structural decision → add a row here in the same commit.
 

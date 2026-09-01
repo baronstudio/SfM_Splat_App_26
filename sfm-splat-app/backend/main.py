@@ -18,6 +18,7 @@ from backend.api import file_handles, websocket
 from backend.api.routes import (
     defaults,
     files,
+    hardware,
     models,
     pipeline,
     projects,
@@ -77,6 +78,9 @@ app.include_router(files.router, prefix="/api/files", tags=["files"])
 # Installation-level, like /api/settings: the neural checkpoints of §7.4 and
 # §7.5 are a property of this machine, not of a project (backend/core/model_store.py).
 app.include_router(models.router, prefix="/api/models", tags=["models"])
+# Also installation-level: the CPU and the GPUs in this machine, and what they
+# are doing right now (backend/core/hardware.py). Same panel, same argument.
+app.include_router(hardware.router, prefix="/api/hardware", tags=["hardware"])
 app.include_router(version.router, prefix="/api/version", tags=["version"])
 app.include_router(websocket.router)
 

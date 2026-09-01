@@ -9,6 +9,7 @@ import {
   Orbit,
   PackageOpen,
   BrainCircuit,
+  Gauge,
   RotateCcw,
   Scan,
   Sparkles,
@@ -32,6 +33,7 @@ import MaskSettings from '@/components/settings/MaskSettings';
 import GeometrySettings from '@/components/settings/GeometrySettings';
 import MeshSettings from '@/components/settings/MeshSettings';
 import CheckpointsSection from '@/components/settings/CheckpointsSection';
+import HardwareSection from '@/components/settings/HardwareSection';
 import { useDefaults } from '@/hooks/useDefaults';
 import { useSettings } from '@/hooks/useSettings';
 import type { AppDefaults, DefaultsSection } from '@/types';
@@ -173,11 +175,13 @@ const Choice: React.FC<{
 
 /* ── Sections ───────────────────────────────────────────────────────────── */
 
-// Two sections of this panel are not `defaults.json` sections at all:
-// `tools` is config.json (layer 1 of CLAUDE.md §4) and `models` is the
-// checkpoint cache on this machine. Both are installation state, which is
-// why they live in the global panel and not on a wizard step.
-type SectionId = DefaultsSection | 'tools' | 'models';
+// Three sections of this panel are not `defaults.json` sections at all:
+// `tools` is config.json (layer 1 of CLAUDE.md §4), `models` is the checkpoint
+// cache on this machine, and `hardware` is the machine itself. All three are
+// installation state, which is why they live in the global panel and not on a
+// wizard step. `hardware` goes one further and is not state at all — it is
+// read-only, so it has no reset and nothing to save.
+type SectionId = DefaultsSection | 'tools' | 'models' | 'hardware';
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ElementType }[] = [
   { id: 'extract', label: 'Extraction', icon: Clapperboard },
@@ -191,7 +195,11 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ElementType }[] = [
   { id: 'viewer', label: '3D viewer', icon: Orbit },
   { id: 'tools', label: 'Tools', icon: FolderCog },
   { id: 'models', label: 'Checkpoints', icon: BrainCircuit },
+  { id: 'hardware', label: 'Hardware', icon: Gauge },
 ];
+
+// Sections with nothing to edit: no draft, no Save, no factory reset.
+const READ_ONLY_SECTIONS: SectionId[] = ['models', 'hardware'];
 
 interface AppSetupPanelProps {
   open: boolean;
@@ -241,7 +249,7 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
   };
 
   const handleResetSection = async () => {
-    if (section === 'tools' || section === 'models') return;
+    if (section === 'tools' || section === 'models' || section === 'hardware') return;
     await resetDefaults(section);
   };
 
@@ -881,6 +889,8 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
 
             {section === 'models' && <CheckpointsSection active={section === 'models'} />}
 
+            {section === 'hardware' && <HardwareSection active={section === 'hardware'} />}
+
             {section === 'tools' && settings && (
               <div className="divide-y divide-slate-800">
                 <p className="text-xs text-slate-500 pb-3">
@@ -983,12 +993,19 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
         <Separator className="bg-slate-700" />
         <div className="flex items-center justify-between px-6 py-3">
           <div className="text-xs">
-            {error && <span className="text-red-400">{error}</span>}
-            {!error && dirty && <span className="text-amber-400">Unsaved changes</span>}
-            {!error && !dirty && <span className="text-slate-600">Saved</span>}
+            {/* A read-only section has nothing to save, so the save state
+                belongs to somewhere else and saying "Saved" under it would be
+                answering a question nobody asked. */}
+            {READ_ONLY_SECTIONS.includes(section) ? null : (
+              <>
+                {error && <span className="text-red-400">{error}</span>}
+                {!error && dirty && <span className="text-amber-400">Unsaved changes</span>}
+                {!error && !dirty && <span className="text-slate-600">Saved</span>}
+              </>
+            )}
           </div>
           <div className="flex items-center gap-2">
-            {section !== 'tools' && section !== 'models' && (
+            {section !== 'tools' && !READ_ONLY_SECTIONS.includes(section) && (
               <Button
                 variant="outline"
                 size="sm"
@@ -999,7 +1016,7 @@ const AppSetupPanel: React.FC<AppSetupPanelProps> = ({ open, onClose }) => {
                 Reset this section
               </Button>
             )}
-            {section !== 'models' && (
+            {!READ_ONLY_SECTIONS.includes(section) && (
               <Button
                 size="sm"
                 disabled={!dirty || saving}
