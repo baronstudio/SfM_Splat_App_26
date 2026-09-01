@@ -35,7 +35,7 @@ from fastapi import APIRouter
 
 router = APIRouter()
 
-APP_NAME = "3DGS Pipeline App"
+APP_NAME = "Spirula Wizard (SfM to Splat to 3D)"
 
 # backend/api/routes/version.py -> the app root, which is inside the repo.
 _APP_ROOT = Path(__file__).resolve().parents[3]

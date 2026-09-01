@@ -30,7 +30,7 @@ const AppTitle: React.FC = () => {
   return (
     <div className="pointer-events-none absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 select-none items-baseline gap-2 md:flex">
       <span className="text-sm font-semibold tracking-wide text-slate-200">
-        {version?.name ?? '3DGS Pipeline App'}
+        {version?.name ?? 'Spirula Wizard (SfM to Splat to 3D)'}
       </span>
       {label && <span className="text-sm font-medium text-slate-400">{label}</span>}
       {commit && (
