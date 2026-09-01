@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Step 3 — Reality Capture Alignment</title>
+  <title>Step 3 — SfM reconstruction</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -12,70 +12,194 @@
     <a href="index.html">Home</a>
     <a href="step1.html">1 · Import</a>
     <a href="step2.html">2 · Extract</a>
-    <a href="step3.html" class="active">3 · RC</a>
-    <a href="step4.html">4 · LFS</a>
-    <a href="step5.html">5 · Export</a>
+    <a href="step3.html" class="active">3 · SfM</a>
+    <a href="step4.html">4 · Train</a>
+    <a href="step5.html">5 · Mesh</a>
   </nav>
 
   <div class="step-header">
     <div class="step-number">3</div>
-    <div class="step-title">Reality Capture — Alignment &amp; Export</div>
+    <div class="step-title">SfM — cameras &amp; sparse cloud</div>
   </div>
 
   <h2>Purpose</h2>
   <p>
-    Run <strong>Reality Capture (RealityCapture)</strong> in headless / command-line mode
-    to align cameras, reconstruct a sparse point cloud, and export the result
-    (camera poses + colmap-compatible data) into <code>rc_output/</code>.
+    Run <code>spirula sfm auto</code> over <code>frames/</code>: detect features, match
+    them between overlapping images, solve every camera pose, and triangulate a sparse
+    point cloud. The result is a COLMAP model in <code>sfm/sparse/0/</code> that step 4
+    trains from.
+  </p>
+  <p>
+    Nothing is copied. The reconstruction is written <em>beside</em> the frames, and the
+    training step reads the same <code>frames/</code> directory — there is no second,
+    undistorted copy of the images anywhere in this app.
   </p>
 
-  <h2>What RC does automatically</h2>
-  <ol>
-    <li>Detects feature points across all frames.</li>
-    <li>Matches features between overlapping images.</li>
-    <li>Estimates camera poses (SfM — Structure from Motion).</li>
-    <li>Exports camera parameters and sparse point cloud.</li>
-  </ol>
-
-  <h2>Prerequisites</h2>
-  <ul>
-    <li>Reality Capture executable path set in <strong>Settings</strong>.</li>
-    <li>At least <strong>80 frames</strong> with ≥ 60 % overlap recommended.</li>
-    <li>Nothing to prepare on the script side: the <code>.rscmd</code> is generated
-        for each run from your settings and written to
-        <code>rc_output/align.rscmd</code>, so you can read exactly what RC was asked
-        to do.</li>
-  </ul>
+  <h2>Settings</h2>
+  <table>
+    <thead><tr><th>Setting</th><th>Default</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Quality</td>
+        <td><code>high</code></td>
+        <td>low / medium / high / extreme — moves the working resolution, the feature
+            budget and the pair selection together. The run prints what the preset moved</td>
+      </tr>
+      <tr>
+        <td>Data type</td>
+        <td><code>individual</code></td>
+        <td>Individual photos / <strong>video frames</strong> / internet collection.
+            Pick <em>video frames</em> for anything extracted from a rush</td>
+      </tr>
+      <tr>
+        <td>Camera model</td>
+        <td><code>opencv</code></td>
+        <td>Pinhole and radial variants, plus <strong>OpenCV fisheye</strong>,
+            <strong>thin-prism fisheye</strong> and <strong>equirectangular (360°)</strong></td>
+      </tr>
+      <tr>
+        <td>Camera mode</td>
+        <td><code>folder</code></td>
+        <td>How intrinsics are grouped — single, per folder, or per image</td>
+      </tr>
+      <tr>
+        <td>Pairs</td>
+        <td><code>auto</code></td>
+        <td>auto / exhaustive / sequential / prefilter</td>
+      </tr>
+      <tr>
+        <td>Use masks</td>
+        <td><span class="badge badge-green">on</span></td>
+        <td>Adopts <code>masks/</code> automatically when it exists — it is already the
+            sibling of the image directory, so it costs no flag</td>
+      </tr>
+    </tbody>
+  </table>
 
   <div class="tip">
-    RC works best with evenly distributed viewpoints.
-    Walk around the object slowly in overlapping circles.
+    <strong>A knob left at its own default is not sent.</strong> Naming a flag explicitly
+    overrides whatever the quality preset would have set for it, so only the values you
+    actually moved reach the command line. That is why the panel shows the preset's own
+    numbers rather than a frozen copy.
   </div>
 
   <div class="tip">
-    Sequences are <em>not</em> separate RC projects. Every frame of every sequence goes
-    through one alignment; the goal is a single <strong>component</strong>. If alignment
-    splits, the frames outside the largest component are dropped from the export &mdash;
-    the <strong>Alignment coverage</strong> panel shown after the run says how many, and
-    from which sequence.
+    <strong>360° and fisheye need no undistortion pass.</strong> Name the lens in
+    <em>Camera model</em> and the reconstruction reads the frames as they are.
   </div>
+
+  <h2>The mask pass</h2>
+  <p>
+    A panel of its own on this step, re-runnable without touching the reconstruction, and
+    it never marks step 3 done or failed — masks are an <em>input</em> to the alignment.
+    Its output is <code>masks/</code>, which both this step and the training step read.
+  </p>
+  <table>
+    <thead><tr><th>Mode</th><th>What it masks</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Off</strong></td>
+        <td>Nothing — or whatever step 2's alpha extraction already wrote</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><strong>Shape</strong></td>
+        <td>The part of every frame that is never scene: a fisheye border, a watermark, the
+            rig in shot. It is a <em>shape</em>, not an object, so it needs no model</td>
+        <td><span class="badge badge-green">free</span> — no download, no licence question,
+            238 frames in about 2.6 s</td>
+      </tr>
+      <tr>
+        <td><strong>Track</strong></td>
+        <td>Named objects, from a text prompt — "mask out the people". Prompted objects come
+            out black and everything else white, which is what a reconstruction wants</td>
+        <td><span class="badge badge-amber">needs a SAM checkpoint</span>, installed from
+            Setup → Checkpoints</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Shape masking is safe to run speculatively: on rectilinear frames with no border it
+    answers "no border found" and writes nothing. Without <em>Replace</em>, a run
+    <strong>intersects</strong> with the masks already there, so it stacks on top of a
+    tracked pass rather than overwriting it.
+  </p>
 
   <div class="warn">
-    This step can be GPU-intensive and may take several minutes.
-    Keep the machine active during processing.
+    SAM 2.1 is Apache-2.0; <strong>SAM 3 is Meta's own non-standard licence</strong>. They
+    are two separate acceptances in Setup → Checkpoints, and nothing is fetched before the
+    matching one is given.
+  </div>
+
+  <h2>Reading the result</h2>
+  <table>
+    <thead><tr><th>Figure</th><th>What to look for</th></tr></thead>
+    <tbody>
+      <tr><td><strong>registered</strong></td><td>images placed / total. 100 % is the target</td></tr>
+      <tr><td><strong>reprojection</strong></td><td>mean and median pixel error. Well under 1 px on a healthy run</td></tr>
+      <tr><td><strong>points</strong></td><td>size of the sparse cloud</td></tr>
+      <tr><td><strong>camera groups</strong></td><td>distinct intrinsics. More than one is normal when the frames are not all the same resolution — it is <em>not</em> a split reconstruction</td></tr>
+      <tr><td><strong>models</strong></td><td><strong>this is the one to watch.</strong> More than one means the capture did not connect into a single view graph</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Exit codes</h3>
+  <table>
+    <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge badge-green">0</span></td><td>A reconstruction that looks sound</td></tr>
+      <tr><td><span class="badge badge-red">1</span></td><td>Usage or runtime error</td></tr>
+      <tr><td><span class="badge badge-red">2</span></td><td>No reconstruction at all</td></tr>
+      <tr><td><span class="badge badge-amber">3</span></td><td>Partial — under half the images registered, or over 2 px mean reprojection</td></tr>
+    </tbody>
+  </table>
+  <div class="tip">
+    <strong>Exit 3 warns and does not fail the step.</strong> Blocking the pipeline over a
+    handful of unalignable frames is the wrong call — the number is named, and whether to
+    re-run is yours.
+  </div>
+
+  <h2>The viewer</h2>
+  <p>
+    The sparse cloud with the <strong>camera overlay</strong> on top: one frustum per solved
+    camera, coloured per sequence, with the path breaking at each cut. Each frustum is drawn
+    at the lens the reconstruction actually solved. This is where a folded camera path, a
+    component at the wrong scale, or an orbit that never closed becomes obvious.
+  </p>
+
+  <div class="warn">
+    <strong>Curation verdicts are advisory here.</strong> This step reconstructs everything
+    in <code>frames/</code>, including frames step 2 marked rejected — there is deliberately
+    no filtered second copy. Use <strong>Delete</strong> in step 2's gallery if you want a
+    frame gone for real.
   </div>
 
   <h2>Output</h2>
   <p>
-    Camera alignment data and sparse reconstruction saved to
-    <code>projects/&lt;name&gt;/rc_output/</code>.
+    <code>sfm/</code> — the features, the matches, <code>sparse/0/</code> (COLMAP
+    <strong>binary</strong>: <code>cameras.bin</code>, <code>images.bin</code>,
+    <code>points3D.bin</code>) and a result file recording the exit code, the registered
+    count and the reprojection error.
   </p>
+
+  <div class="warn">
+    Re-running this step deletes the whole <code>sfm/</code> workspace first — including
+    <code>depths/</code> and <code>normals/</code> if the geometry pass of step 4 has
+    written them, since they are per-image maps of <em>this</em> reconstruction.
+    <code>masks/</code> is left alone.
+  </div>
 
   <h2>Troubleshooting</h2>
   <ul>
-    <li><strong>RC exits with error code</strong> — Check the Live Log for details; verify the <code>.rscmd</code> script path.</li>
-    <li><strong>0 cameras aligned</strong> — Too few overlapping frames; increase FPS in Step 2.</li>
-    <li><strong>Slow alignment</strong> — Reduce frame count or upgrade GPU.</li>
+    <li><strong>More than one model</strong> — the capture broke into disconnected pieces.
+        Look for the gap warnings in step 2, and prefer <em>video frames</em> as the data
+        type.</li>
+    <li><strong>Few images registered</strong> — usually too little overlap, or heavy
+        motion blur. Extract at a higher fps and re-run.</li>
+    <li><strong>A 360 capture reconstructing badly</strong> — check the camera model is
+        equirectangular or the right fisheye, not <code>opencv</code>.</li>
+    <li><strong>Slow</strong> — <code>extreme</code> quality raises the working resolution
+        and the feature budget substantially; <code>medium</code> is often enough.</li>
   </ul>
 
 </body>

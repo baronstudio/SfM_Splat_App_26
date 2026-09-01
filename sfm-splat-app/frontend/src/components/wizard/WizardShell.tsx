@@ -124,7 +124,7 @@ const WizardShell: React.FC<{ onBackToHome?: () => void }> = ({ onBackToHome }) 
           </DropdownMenu>
 
           <ChevronRight className="w-4 h-4 text-slate-500" />
-          <span style={{ color: '#00D4FF' }}>Step {currentStep}/6</span>
+          <span style={{ color: '#00D4FF' }}>Step {currentStep}/5</span>
         </div>
 
         {/* App name + version, centred over the bar */}

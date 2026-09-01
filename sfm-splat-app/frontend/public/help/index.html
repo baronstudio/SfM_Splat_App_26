@@ -3,27 +3,33 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>3DGS Pipeline — Help</title>
+  <title>Spirula Wizard — Help</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-  <h1>📖 3DGS Pipeline App — Help</h1>
+  <h1>📖 Spirula Wizard — Help</h1>
 
   <nav class="nav">
     <a href="index.html" class="active">Home</a>
     <a href="step1.html">1 · Import</a>
     <a href="step2.html">2 · Extract</a>
-    <a href="step3.html">3 · RC</a>
-    <a href="step4.html">4 · LFS</a>
-    <a href="step5.html">5 · Export</a>
+    <a href="step3.html">3 · SfM</a>
+    <a href="step4.html">4 · Train</a>
+    <a href="step5.html">5 · Mesh</a>
   </nav>
 
   <div class="card">
     <p>
-      <strong>3DGS Pipeline App</strong> is a six-step desktop workflow that converts
-      a video or image set into a polished <strong>3D Gaussian Splatting</strong> scene,
-      ready for web or engine import.
+      <strong>Spirula Wizard</strong> is a five-step local workflow that turns a video
+      or an image set into a <strong>3D Gaussian Splatting</strong> scene and a textured
+      mesh, ready for web or engine import.
+    </p>
+    <p>
+      It drives <strong>two binaries and nothing else</strong>: <code>ffmpeg</code> for
+      everything before the reconstruction, and <code>spirula.exe</code> for the
+      reconstruction itself. Spirula is <strong>Vulkan</strong>, not CUDA — the pipeline
+      runs on NVIDIA, AMD, Intel and Apple silicon alike.
     </p>
   </div>
 
@@ -40,74 +46,306 @@
     <tbody>
       <tr>
         <td><span class="badge badge-blue">1</span></td>
-        <td><a href="step1.html">Import Video / Images</a></td>
-        <td>FFmpeg</td>
-        <td>Raw frames in <code>input/</code></td>
+        <td><a href="step1.html">Import</a></td>
+        <td>—</td>
+        <td>Source video or image set in <code>input/</code></td>
       </tr>
       <tr>
         <td><span class="badge badge-blue">2</span></td>
-        <td><a href="step2.html">Extract Frames</a></td>
+        <td><a href="step2.html">Extract frames</a></td>
         <td>FFmpeg</td>
-        <td>Sampled frames in <code>frames/</code></td>
+        <td><code>frames/</code>, <code>analysis/</code>, and <code>masks/</code> from an alpha channel</td>
       </tr>
       <tr>
         <td><span class="badge badge-blue">3</span></td>
-        <td><a href="step3.html">Reality Capture (RC)</a></td>
-        <td>Reality Capture</td>
-        <td>Aligned cameras + sparse cloud in <code>rc_output/</code></td>
+        <td><a href="step3.html">SfM</a></td>
+        <td><code>spirula sfm auto</code></td>
+        <td>Cameras + sparse cloud in <code>sfm/sparse/0/</code></td>
       </tr>
       <tr>
         <td><span class="badge badge-blue">4</span></td>
-        <td><a href="step4.html">LFS Training</a></td>
-        <td>Lichtfeld Studio</td>
-        <td>Gaussian splat <code>.ply</code> in <code>lfs_output/</code></td>
+        <td><a href="step4.html">Training</a></td>
+        <td><code>spirula train</code></td>
+        <td>Gaussian splat in <code>train/run/step-*.ckpt/splat.ply</code></td>
       </tr>
       <tr>
         <td><span class="badge badge-blue">5</span></td>
-        <td><a href="step5.html">Export PLY</a></td>
-        <td>SuperSplat</td>
-        <td>Optimised <code>.ply</code> in <code>export/</code></td>
+        <td><a href="step5.html">Mesh</a></td>
+        <td><code>spirula mesh</code></td>
+        <td>Textured mesh in <code>mesh/</code>, delivery drawer in <code>export/</code></td>
       </tr>
     </tbody>
   </table>
 
+  <p>
+    Five more passes hang off the steps rather than being steps of their own, because each
+    can be re-run alone without redoing the expensive work above it:
+    <strong>curation</strong> (step 2), <strong>masking</strong> (step 3),
+    <strong>geometry</strong>, <strong>crop</strong> and <strong>splat export</strong>
+    (step 4).
+  </p>
+
   <h2>Quick start</h2>
   <ol>
-    <li>Click <strong>New Project</strong> in the top bar and give it a name.</li>
-    <li>Follow the steps <strong>1 → 6</strong> in order; each step validates its
-        prerequisites before running.</li>
-    <li>Monitor progress in the <strong>Live Log</strong> panel at the bottom.</li>
-    <li>Use <strong>Abort</strong> in the top bar to cancel a running pipeline safely.</li>
+    <li>Pick <strong>New Project</strong> from the project menu in the top bar and give it a name.</li>
+    <li>Import a video or an image set in step 1.</li>
+    <li>Walk steps <strong>2 → 5</strong> in order; each one checks its input before it runs.</li>
+    <li>Watch the <strong>Live Log</strong> at the bottom and the progress bars on the step.</li>
+    <li><strong>Abort</strong> in the top bar stops a running job — it kills the tool's whole
+        process tree, so nothing is left running behind it.</li>
   </ol>
+
+  <div class="tip">
+    Re-running a step <strong>resets that step and every step after it</strong> before it
+    writes anything. <code>input/</code> is never a casualty.
+  </div>
 
   <h2>Interface layout</h2>
   <div class="card">
     <ul>
-      <li><strong>Top bar</strong> — Project selector, step counter, Abort button.</li>
-      <li><strong>Left sidebar</strong> — Step navigator; click any step to jump to it.</li>
-      <li><strong>Center panel</strong> — Active step configuration and controls.</li>
-      <li><strong>Right sidebar</strong> — Context-sensitive help (this panel).</li>
-      <li><strong>Bottom panel</strong> — Live log output from the running pipeline.</li>
+      <li><strong>Top bar</strong> — Home, project menu, step counter, app version, setup
+          (gear), Help and Live Log toggles, Abort.</li>
+      <li><strong>Left column</strong> — the step navigator, the <strong>Project info</strong>
+          panel (footage author, description and a recap of the project row), and the live
+          <strong>CPU / GPU / VRAM gauges</strong> pinned under them.</li>
+      <li><strong>Centre</strong> — the active step: its settings, its Run button, its
+          results and, from step 3 on, the 3D viewer.</li>
+      <li><strong>Right</strong> — this Help panel, which follows the step you are on.</li>
+      <li><strong>Bottom</strong> — the Live Log, fed over a WebSocket while a job runs.</li>
     </ul>
   </div>
 
-  <h2>Settings</h2>
+  <h2>The 3D viewer</h2>
   <p>
-    Open <strong>Settings</strong> from the top bar to configure tool paths
-    (FFmpeg, spirula) and pipeline defaults.
-    Settings are persisted in <code>config.json</code> at the project root.
+    Steps 3, 4 and 5 each show their own output — the sparse cloud with the camera overlay,
+    the trained splat, the textured mesh. The viewer <strong>never writes to the
+    reconstruction</strong>; the one thing it places is the crop volumes of step 4, and the
+    cut itself is made server-side into a separate file.
+  </p>
+  <p>
+    Common controls: a level selector (a decimated preview, or <strong>Full</strong>),
+    <strong>Flip up</strong> for a capture the mapper levelled on the wrong vertical,
+    reframe, and fullscreen — the wizard column is too narrow to judge a scene in.
   </p>
 
-  <div class="tip">All tool paths must be valid before running any pipeline step.</div>
+  <h2>Spirula Studio — the tool behind steps 3 to 5</h2>
+  <p>
+    One binary, <code>spirula.exe</code>, carries <strong>six tools</strong>. This wizard
+    drives five of them from the command line — <code>sfm</code>, <code>train</code>,
+    <code>sam</code>, <code>geometry</code>, <code>mesh</code>. The sixth is
+    <code>gui</code>: <strong>Spirula Studio's own graphical editor</strong>, which is what
+    you get by running the binary with no command at all.
+  </p>
+  <div class="card">
+    <ul>
+      <li><code>spirula</code> — open the editor.</li>
+      <li><code>spirula &lt;file-or-folder&gt;</code> — open a splat, a checkpoint or a
+          dataset directly in it.</li>
+    </ul>
+    <p>
+      The binary is wherever <strong>Setup → Tools</strong> points; by default
+      <code>tools/spirula/spirula.exe</code> under the app.
+    </p>
+  </div>
+  <p>
+    <strong>The wizard never launches the editor</strong>, and it explicitly disables the
+    trainer's own built-in viewer on every run — left enabled, a finished training run
+    never exits, and the viewer binds every network interface rather than just this
+    machine. Opening a result in the editor afterwards is a separate, manual thing, and a
+    perfectly good one: <code>train/run/step-*.ckpt/splat.ply</code> or
+    <code>train/crop/splat.ply</code> will open straight in it.
+  </p>
+  <div class="tip">
+    Every invocation from this app pins <strong>English</strong> output, because the tool
+    localises its progress lines and the parsers here read English. The editor itself
+    speaks thirteen languages, French included — that is a property of how you launch it,
+    not of the build.
+  </div>
+  <p>
+    The installed version is read, never remembered: <code>spirula --version</code> is
+    logged at the top of every run and recorded in that step's result, so a result always
+    says which build produced it. Upstream:
+    <a href="https://github.com/harry7557558/spirula-studio" target="_blank" rel="noreferrer">github.com/harry7557558/spirula-studio</a>.
+  </p>
 
-  <h2>Keyboard shortcuts</h2>
+  <h2>Settings — three layers</h2>
   <table>
-    <thead><tr><th>Key</th><th>Action</th></tr></thead>
+    <thead><tr><th>Layer</th><th>Where</th><th>What</th></tr></thead>
     <tbody>
-      <tr><td><code>?</code></td><td>Toggle Help panel</td></tr>
-      <tr><td><code>L</code></td><td>Toggle Live Log panel</td></tr>
+      <tr>
+        <td>Installation</td>
+        <td><code>config.json</code></td>
+        <td>Binary paths (spirula, FFmpeg), hardware decoding, the checkpoint cache</td>
+      </tr>
+      <tr>
+        <td>Defaults</td>
+        <td><code>defaults.json</code></td>
+        <td>Business defaults for every step — what a new project starts from</td>
+      </tr>
+      <tr>
+        <td>Per project</td>
+        <td>the project row</td>
+        <td>Only the keys you changed for <em>this</em> project</td>
+      </tr>
     </tbody>
   </table>
+  <p>
+    Precedence is <strong>project &gt; defaults &gt; code</strong>. A project stores only
+    its own overrides, so changing a default still reaches every project that never
+    touched it.
+  </p>
+
+  <div class="tip">
+    <strong>There is no Save button anywhere.</strong> Every panel saves as you type —
+    debounced, and flushed when you leave the panel, switch project or close the tab. The
+    small "Saving… / Saved" hint beside a panel is the confirmation.
+  </div>
+
+  <h2>Application setup (the gear icon)</h2>
+  <p>
+    One section per wizard step — Extraction, Curation, SfM, Masks, Geometry, Training,
+    Mesh, Export, 3D viewer — plus three that are properties of this machine rather than
+    business defaults:
+  </p>
+  <ul>
+    <li><strong>Tools</strong> — where <code>spirula.exe</code> and <code>ffmpeg</code>
+        live, and hardware decoding.</li>
+    <li><strong>Checkpoints</strong> — the SAM and geometry neural weights: downloaded,
+        resumed, verified against the manifest compiled into <code>spirula.exe</code>, and
+        installed into spirula's own model cache. Each family's licence is shown and
+        accepted separately before anything is fetched.</li>
+    <li><strong>Hardware</strong> — CPU, memory and every graphics adapter, with spirula's
+        own Vulkan verdict on each. Read-only, so it has no Save and no reset.</li>
+  </ul>
+
+  <div class="warn">
+    <code>spirula.exe</code> and FFmpeg must both be resolvable before any step will run.
+    Checkpoints are <strong>optional</strong>: SfM, training, meshing and shape masking
+    need none.
+  </div>
+
+  <h2>Project lifecycle</h2>
+  <p>The <code>⋮</code> menu on each project tile, all refused while that project has a job running:</p>
+  <table>
+    <thead><tr><th>Action</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Copy</strong></td><td>Duplicates the directory and the row under a new name — settings, crop volumes and saved view included</td></tr>
+      <tr><td><strong>Reset</strong></td><td>Deletes the artefacts of a step and of every step after it. Never <code>input/</code></td></tr>
+      <tr><td><strong>Archive</strong></td><td>Zips the directory away and keeps the row disabled until it is restored</td></tr>
+      <tr><td><strong>Delete</strong></td><td>Removes the row, the directory and the archive</td></tr>
+    </tbody>
+  </table>
+
+  <div class="warn">
+    A copy or an archive moves gigabytes and <strong>cannot be aborted</strong> — there is
+    no child process to kill. It runs behind a dialog that nothing dismisses until it is
+    finished.
+  </div>
+
+  <h2>Licences &amp; credits</h2>
+  <p>
+    This app is an <strong>orchestrator</strong>. The reconstruction tools are invoked as
+    <strong>subprocesses</strong> — never linked into this process, never bundled, never
+    redistributed by it. The audit below is kept as if the app could be distributed
+    tomorrow; it is a record of what is used and under what terms, not legal advice.
+  </p>
+
+  <h3>The external tools</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Licence</th><th>How it is used</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Spirula Studio</strong> (<code>spirula.exe</code>)</td>
+        <td><span class="badge badge-amber">GPL-3.0</span></td>
+        <td>Steps 3, 4 and 5. Subprocess only. Not committed to this repository and not
+            shipped with it — the setup script fetches the upstream release</td>
+      </tr>
+      <tr>
+        <td><strong>FFmpeg</strong></td>
+        <td><span class="badge badge-amber">LGPL-2.1+</span> (GPL if the build includes x264)</td>
+        <td>Step 2, and every probe and poster frame. Your own system install; the path is
+            in Setup → Tools</td>
+      </tr>
+      <tr>
+        <td><strong>@playcanvas/splat-transform</strong></td>
+        <td><span class="badge badge-green">MIT</span></td>
+        <td><em>Optional.</em> Only the SOG, SPZ and compressed-PLY export formats of step 4.
+            PLY and <code>.splat</code> need nothing installed at all</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>The neural checkpoints — four separate questions</h3>
+  <p>
+    Weights are <strong>never bundled</strong>: <code>spirula.exe</code> carries no model
+    data. Setup → Checkpoints shows each family's terms and requires the matching
+    acceptance before it will fetch anything, and the download route re-checks that
+    acceptance rather than trusting the panel.
+  </p>
+  <table>
+    <thead><tr><th>Family</th><th>Used by</th><th>Licence</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>SAM 2.1</strong></td>
+        <td rowspan="2">Mask tracking (step 3)</td>
+        <td><span class="badge badge-green">Apache-2.0</span></td>
+      </tr>
+      <tr>
+        <td><strong>SAM 3</strong></td>
+        <td><span class="badge badge-amber">Meta's own, non-standard</span> — accepted
+            separately from SAM 2.1, because one acceptance spanning both would answer the
+            harder question by accident</td>
+      </tr>
+      <tr>
+        <td><strong>Metric3D</strong></td>
+        <td rowspan="2">Depth &amp; normals (step 4)</td>
+        <td><span class="badge badge-green">CC0-1.0</span> — public domain, nothing to comply with</td>
+      </tr>
+      <tr>
+        <td><strong>MoGe-2</strong></td>
+        <td><span class="badge badge-amber">MIT upstream — not audited on the mirror</span>.
+            The upstream project is MIT, but the repositories the default files are actually
+            fetched from declare no licence of their own. The panel says so in amber rather
+            than showing a tick it cannot back</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="tip">
+    Shape masking (<em>Mode: shape</em> in step 3) needs <strong>no checkpoint</strong>, and
+    neither do SfM, training or meshing. The licence questions above only arise if you want
+    prompt-driven object masking or geometry supervision.
+  </div>
+
+  <h3>This application</h3>
+  <table>
+    <thead><tr><th>Side</th><th>Built on</th><th>Licences</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Backend</td>
+        <td>FastAPI, Uvicorn, Pydantic, SQLModel, httpx, aiofiles, NumPy, OpenCV, PySceneDetect</td>
+        <td><span class="badge badge-green">MIT / BSD-3 / Apache-2.0</span></td>
+      </tr>
+      <tr>
+        <td>Frontend</td>
+        <td>React, Vite, Tailwind, shadcn/ui, Zustand, recharts, three.js, @mkkellogg/gaussian-splats-3d</td>
+        <td><span class="badge badge-green">MIT</span></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Every dependency is justified and carries a row in the project's own audit table before
+    it is added — there are no unlisted ones. The hardware panel and the gauges, for
+    instance, cost nothing at all: they read documented Windows facilities directly rather
+    than pulling in a monitoring library.
+  </p>
+
+  <div class="warn">
+    <strong>What this app deliberately does not depend on:</strong> no CUDA, anywhere. Not in
+    the reconstruction, not in the export path — a Python library that would have made SOG
+    export easier was refused for importing a CUDA package. That is the whole reason this
+    pipeline runs on AMD, Intel and Apple silicon as readily as on NVIDIA.
+  </div>
 
 </body>
 </html>

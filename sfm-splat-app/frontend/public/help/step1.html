@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Step 1 — Import Video / Images</title>
+  <title>Step 1 — Sources</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -12,63 +12,117 @@
     <a href="index.html">Home</a>
     <a href="step1.html" class="active">1 · Import</a>
     <a href="step2.html">2 · Extract</a>
-    <a href="step3.html">3 · RC</a>
-    <a href="step4.html">4 · LFS</a>
-    <a href="step5.html">5 · Export</a>
+    <a href="step3.html">3 · SfM</a>
+    <a href="step4.html">4 · Train</a>
+    <a href="step5.html">5 · Mesh</a>
   </nav>
 
   <div class="step-header">
     <div class="step-number">1</div>
-    <div class="step-title">Import Video / Images</div>
+    <div class="step-title">Sources</div>
   </div>
 
   <h2>Purpose</h2>
   <p>
-    Copy or link your source media (video file or image folder) into the project's
-    <code>input/</code> directory so subsequent steps can access it.
+    Put the source media into the project's <code>input/</code> directory. Everything
+    downstream reads from there, and <strong>no reset ever deletes it</strong> — a reset
+    of any step leaves <code>input/</code> alone, so re-extracting is always possible.
   </p>
 
-  <h2>Supported inputs</h2>
+  <h2>Two kinds of source</h2>
   <table>
-    <thead><tr><th>Type</th><th>Formats</th></tr></thead>
+    <thead><tr><th>Kind</th><th>Accepted</th><th>What step 2 does with it</th></tr></thead>
     <tbody>
       <tr>
         <td>Video</td>
-        <td><code>.mp4</code>, <code>.mov</code>, <code>.avi</code>, <code>.mkv</code></td>
+        <td><code>.mp4</code>, <code>.mov</code> (plus <code>.srt</code> alongside)</td>
+        <td>Extracts frames at a working fps</td>
       </tr>
       <tr>
-        <td>Images</td>
-        <td><code>.jpg</code>, <code>.jpeg</code>, <code>.png</code>, <code>.tiff</code></td>
+        <td>Image set</td>
+        <td><code>.jpg</code>, <code>.jpeg</code>, <code>.png</code>, <code>.tif</code>, <code>.tiff</code></td>
+        <td>Conforms them — every image becomes a frame</td>
       </tr>
     </tbody>
   </table>
 
-  <h2>How to use</h2>
-  <ol>
-    <li>Select <strong>Video file</strong> or <strong>Image folder</strong> using the file picker.</li>
-    <li>The app copies the file(s) into <code>projects/&lt;name&gt;/input/</code>.</li>
-    <li>Click <strong>Run Step 1</strong> to confirm the import and advance.</li>
-  </ol>
+  <h2>Importing a video</h2>
+  <p>
+    Drop it on the upload zone, or click it to browse. The file is uploaded into
+    <code>input/</code> with a live percentage. The list above the zone shows what is
+    already there, with its size and a bin icon to remove it.
+  </p>
 
   <div class="tip">
-    For best results, capture footage with <strong>overlapping views ≥ 60 %</strong>
-    and avoid motion blur.
+    If <code>input/</code> holds more than one video, step 2 badges the one the extraction
+    will actually consume — the same function does the badging and the opening, so the
+    badge cannot lie.
   </div>
 
-  <div class="warn">
-    Very large files (&gt; 4 GB) may take a moment to copy — do not close the app.
+  <h2>Importing an image set — three doors</h2>
+  <p>They differ by cost, not by result:</p>
+  <table>
+    <thead><tr><th>Door</th><th>When to use it</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Folder path</strong></td>
+        <td><strong>The fast one.</strong> Type or paste a path on <em>this</em> machine and
+            it is read server-side — a 20 GB set is a local copy, never an upload</td>
+      </tr>
+      <tr>
+        <td><strong>Zip</strong></td>
+        <td>One upload, one unpack. Right for a set that arrived from somewhere else</td>
+      </tr>
+      <tr>
+        <td><strong>File selection</strong></td>
+        <td>Drop the images, or use the browser's folder picker. The slow lane by
+            construction — kept because it is the only one that works from another
+            machine on the network</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>What happens to an imported set</h2>
+  <ul>
+    <li>The images are <strong>renamed</strong> to <code>input/&lt;set&gt;/&lt;set&gt;_0001.png</code>
+        — zero-padded and contiguous, which is what lets FFmpeg read the whole set as one
+        input instead of one subprocess per image.</li>
+    <li><code>imageset.json</code> keeps the mapping back to the original filenames.</li>
+    <li>Several sets can live side by side; each is listed with its image count and origin,
+        and can be removed on its own.</li>
+  </ul>
+
+  <div class="tip">
+    <strong>PNG with a real alpha channel is worth keeping.</strong> Step 2 offers to
+    extract that channel into <code>masks/</code>, one greyscale PNG per frame — which is
+    exactly the layout both the SfM and the training step read, with no further work.
   </div>
+
+  <h2>Capture advice</h2>
+  <ul>
+    <li>Overlapping viewpoints, moving slowly and steadily — the curation gate in step 2
+        wants <strong>2–12 %</strong> of frame width between kept frames.</li>
+    <li>Avoid motion blur; the sharpness pass will drop blurred frames, and dropping too
+        many leaves gaps.</li>
+    <li><strong>360° and fisheye footage is a first-class input.</strong> Spirula reads
+        equirectangular and &gt;180° fisheye natively — there is no undistortion pass
+        anywhere in this pipeline. Name the lens in step 3.</li>
+  </ul>
 
   <h2>Output</h2>
   <p>
-    Files are stored in <code>input/</code> under the project folder.
-    Video is kept as-is; image sets are copied directly.
+    <code>projects/&lt;slug&gt;/input/</code> — the video as it was uploaded, or one
+    subdirectory per image set.
   </p>
 
   <h2>Troubleshooting</h2>
   <ul>
-    <li><strong>File not copied</strong> — Check disk space and file permissions.</li>
-    <li><strong>Unsupported format</strong> — Convert to MP4/H.264 before importing.</li>
+    <li><strong>Nothing lands</strong> — check disk space and that the path you typed
+        exists on the machine running the app, not on the machine running the browser.</li>
+    <li><strong>An unusual video container</strong> — the extraction opens it with FFmpeg,
+        so most things work; if it does not, convert to MP4/H.264 first.</li>
+    <li><strong>A set that is not a clean sequence</strong> — it still imports, file by
+        file, and says so in the log; it is only slower.</li>
   </ul>
 
 </body>

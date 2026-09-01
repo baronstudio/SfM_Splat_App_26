@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Step 2 — Extract Frames</title>
+  <title>Step 2 — Extract &amp; curate frames</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -12,72 +12,182 @@
     <a href="index.html">Home</a>
     <a href="step1.html">1 · Import</a>
     <a href="step2.html" class="active">2 · Extract</a>
-    <a href="step3.html">3 · RC</a>
-    <a href="step4.html">4 · LFS</a>
-    <a href="step5.html">5 · Export</a>
+    <a href="step3.html">3 · SfM</a>
+    <a href="step4.html">4 · Train</a>
+    <a href="step5.html">5 · Mesh</a>
   </nav>
 
   <div class="step-header">
     <div class="step-number">2</div>
-    <div class="step-title">Extract Frames</div>
+    <div class="step-title">Extract frames &amp; curate</div>
   </div>
 
   <h2>Purpose</h2>
   <p>
-    Use <strong>FFmpeg</strong> to extract individual frames from the imported video at a
-    controlled rate, saving them as JPEG images in <code>frames/</code>.
+    One job, two phases. <strong>Extraction</strong> writes <code>frames/</code> with
+    FFmpeg — the image directory every later step reads. <strong>Curation</strong> then
+    scores those frames and marks the ones worth keeping.
   </p>
 
-  <h2>Parameters</h2>
+  <div class="tip">
+    The two phases are separable on purpose: <strong>Re-analyse</strong> re-runs the
+    curation over the frames already on disk. Tuning a threshold must never cost a
+    re-extraction.
+  </div>
+
+  <h2>The source panel</h2>
+  <p>
+    Before anything runs, the step lists what <code>input/</code> holds: each file with its
+    container, codec, resolution, fps, duration and a poster frame — pulled a tenth of the
+    way in, because frame 0 is the operator still reaching for the camera. The video the
+    extraction will consume is badged.
+  </p>
+
+  <h2>Extraction settings</h2>
   <table>
-    <thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead>
+    <thead><tr><th>Setting</th><th>Default</th><th>What it does</th></tr></thead>
     <tbody>
       <tr>
-        <td>FPS</td>
-        <td><code>2</code></td>
-        <td>Frames extracted per second of video</td>
+        <td>Capture preset</td>
+        <td><code>orbit_drone</code></td>
+        <td>Carries the target frame count and the overlap band together —
+            <code>orbit_drone</code>, <code>handheld_walk</code>, <code>turntable</code>,
+            <code>interior_scan</code></td>
+      </tr>
+      <tr>
+        <td>fps mode</td>
+        <td><code>auto</code></td>
+        <td>See the table below</td>
+      </tr>
+      <tr>
+        <td>Target frames</td>
+        <td><code>300</code></td>
+        <td>What <code>auto</code> aims at over the clip's duration</td>
       </tr>
       <tr>
         <td>Quality</td>
         <td><code>2</code></td>
-        <td>JPEG quality (1 = best, 31 = worst)</td>
+        <td>JPEG quantiser (1 best … 31 worst). <strong>File weight, never pixel size</strong></td>
+      </tr>
+      <tr>
+        <td>Output scale</td>
+        <td><code>100 %</code></td>
+        <td>The resolution actually written. Applied <em>after</em> the fps gate, so only
+            surviving frames are resized. 100 % adds no scaling at all</td>
       </tr>
       <tr>
         <td>Max frames</td>
         <td><em>unlimited</em></td>
-        <td>Optional hard cap on extracted frames</td>
+        <td>A hard cap on the number written</td>
+      </tr>
+      <tr>
+        <td>mpdecimate</td>
+        <td><span class="badge badge-red">off</span></td>
+        <td>Leave it off: it duplicates the overlap gate's job and drops frames
+            non-deterministically, breaking the frame ↔ timecode mapping the timeline and
+            the cut detection depend on</td>
       </tr>
     </tbody>
   </table>
 
-  <h2>How to use</h2>
-  <ol>
-    <li>Adjust <strong>FPS</strong> — higher = more frames = better coverage but slower RC.</li>
-    <li>Leave <strong>Quality</strong> at 2 for photogrammetry (high quality JPEG).</li>
-    <li>Click <strong>Run Step 2</strong>.</li>
-  </ol>
-
-  <div class="tip">
-    For a 60-second capture at 2 FPS you get ~120 frames — a good starting point.
-    Aim for <strong>80–300 frames</strong> for Reality Capture.
-  </div>
+  <h3>Working fps policy</h3>
+  <table>
+    <thead><tr><th>Mode</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>auto</code></td><td>target frames ÷ duration, clamped to the preset's bounds</td></tr>
+      <tr><td><code>ratio</code></td><td>a fraction of the source fps — default <strong>0.2</strong>, so 20 img/s on a 100 fps rush</td></tr>
+      <tr><td><code>absolute</code></td><td>a literal fps you type</td></tr>
+    </tbody>
+  </table>
 
   <div class="warn">
-    If the input is already an image set (not a video), this step copies images
-    directly to <code>frames/</code> without re-encoding.
+    An fps too low to place even one frame inside the clip is <strong>refused before
+    anything is deleted</strong>, naming the fps that would work — FFmpeg does not write
+    zero frames, it fails. The estimate beside the setting turns amber at the same
+    threshold.
+  </div>
+
+  <div class="tip">
+    <strong>Hardware decoding is an installation setting</strong>, in Setup → Tools, not a
+    per-project one: it describes the GPU in this machine. It is worth having — on 4K
+    HEVC it took an extraction from 95 s to 18 s. If the driver refuses it, FFmpeg falls
+    back to software and the run says so on the line where it happens, in the log.
+  </div>
+
+  <h2>Image sets instead of a video</h2>
+  <p>
+    When the source is an imported set the step <strong>conforms</strong> rather than
+    extracts, and the result is indistinguishable downstream. <strong>Every image is a
+    frame</strong>: the fps policy does not apply and is hidden, and <code>Max frames</code>
+    is the only gate. At 100 % scale with a matching format the frames are hard-linked
+    rather than re-encoded — re-encoding a JPEG is generation loss for no gain.
+  </p>
+  <p>
+    If the set is PNG with a real alpha channel, the step asks — inline, beside the
+    estimate it changes — and extracts that channel into <code>masks/</code>.
+  </p>
+
+  <h2>Curation</h2>
+  <p>Four passes, in order:</p>
+  <ol>
+    <li><strong>Scenes</strong> — each cut splits the footage into a <em>sequence</em>.
+        The scores are captured by the extraction itself, on frames it was decoding
+        anyway, which is what took a 52 s rush from 318 s of detection to about 5 s.</li>
+    <li><strong>Sharpness</strong> — Tenengrad on greyscale. Rejection is
+        <strong>relative</strong>, against a rolling 15-frame median, never an absolute
+        threshold — an absolute one does not generalise across content.</li>
+    <li><strong>Overlap</strong> — per sequence, the median feature displacement against
+        the last kept frame. Below <strong>2 %</strong> of frame width →
+        <code>redundant</code>; inside <strong>2–12 %</strong> → keep; above → keep, flagged
+        <code>gap</code>.</li>
+    <li><strong>Select</strong> — the verdicts merge into a selection, and your manual
+        overrides always win.</li>
+  </ol>
+
+  <table>
+    <thead><tr><th>Curation setting</th><th>Default</th></tr></thead>
+    <tbody>
+      <tr><td>Run automatically after extraction</td><td><span class="badge badge-green">on</span></td></tr>
+      <tr><td>Sharpness window / sensitivity</td><td><code>15</code> frames / <code>50</code></td></tr>
+      <tr><td>Overlap band</td><td>from the capture preset (2 – 12 %)</td></tr>
+      <tr><td>Minimum scene length</td><td><code>15</code> frames</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Reading the result</h2>
+  <ul>
+    <li>The <strong>summary</strong> row: kept / total, removed, and the split by reason —
+        blur, redundant, gaps.</li>
+    <li>The <strong>sharpness timeline</strong>, with a marker at every detected cut.</li>
+    <li>The <strong>frame gallery</strong>, with each frame's verdict and a manual
+        keep / drop override. Overrides are never regenerated by a re-analysis.</li>
+  </ul>
+
+  <div class="warn">
+    <strong>A verdict is advisory.</strong> Step 3 is handed the whole
+    <code>frames/</code> directory, so a frame marked <code>rejected:blur</code> is still
+    reconstructed. Only <strong>Delete</strong> in the gallery actually removes one. Step 3
+    repeats this where you can see it.
   </div>
 
   <h2>Output</h2>
-  <p>
-    JPEG frames named <code>frame_00001.jpg</code>, <code>frame_00002.jpg</code>, …
-    stored in <code>projects/&lt;name&gt;/frames/</code>.
-  </p>
+  <ul>
+    <li><code>frames/</code> — the image directory, <code>frame_0001.jpg</code> onwards.</li>
+    <li><code>analysis/</code> — the probe, what the extraction did, the per-frame scores,
+        the selection and your overrides.</li>
+    <li><code>masks/</code> — only if an alpha channel was extracted.</li>
+  </ul>
 
   <h2>Troubleshooting</h2>
   <ul>
-    <li><strong>FFmpeg not found</strong> — Verify the FFmpeg path in Settings.</li>
-    <li><strong>0 frames extracted</strong> — Check that the input video is not corrupt.</li>
-    <li><strong>Blurry frames</strong> — Reduce FPS or use a tripod during capture.</li>
+    <li><strong>FFmpeg not found</strong> — set its path in Setup → Tools.</li>
+    <li><strong>Far too few frames</strong> — check the fps mode; <code>absolute</code> left
+        at a small value on a long clip is the usual cause.</li>
+    <li><strong>Nearly everything rejected as blur</strong> — lower the sharpness
+        sensitivity and press Re-analyse; nothing is re-extracted.</li>
+    <li><strong>A cut where there is no cut</strong> — an invented cut resets the overlap
+        gate mid-shot. Force the cut source to the frames, or raise the threshold, and
+        re-analyse.</li>
   </ul>
 
 </body>

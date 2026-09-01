@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Step 4 — LFS Training</title>
+  <title>Step 4 — Gaussian splat training</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -12,73 +12,215 @@
     <a href="index.html">Home</a>
     <a href="step1.html">1 · Import</a>
     <a href="step2.html">2 · Extract</a>
-    <a href="step3.html">3 · RC</a>
-    <a href="step4.html" class="active">4 · LFS</a>
-    <a href="step5.html">5 · Export</a>
+    <a href="step3.html">3 · SfM</a>
+    <a href="step4.html" class="active">4 · Train</a>
+    <a href="step5.html">5 · Mesh</a>
   </nav>
 
   <div class="step-header">
     <div class="step-number">4</div>
-    <div class="step-title">LFS — Gaussian Splat Training</div>
+    <div class="step-title">Training — the Gaussian splat</div>
   </div>
 
   <h2>Purpose</h2>
   <p>
-    Run <strong>Lichtfeld Studio</strong> (LFS) to train a 3D Gaussian Splatting model
-    from the camera-aligned frames produced in Step 3.
-    The result is a <code>.ply</code> file containing millions of coloured Gaussian primitives.
+    Run <code>spirula train</code> on the cameras from step 3 and the frames from step 2.
+    The output is <code>splat.ply</code> — hundreds of thousands of coloured Gaussian
+    primitives — plus three optional passes on the same page: <strong>geometry</strong>
+    before the run, <strong>crop</strong> and <strong>export</strong> after it.
   </p>
 
-  <h2>Key parameters</h2>
+  <div class="tip">
+    Spirula trains through <strong>Vulkan</strong>. It runs on the discrete card, and it
+    runs on integrated graphics too — there is no CUDA requirement anywhere in this app.
+    The gauges in the left column show which device is actually working.
+  </div>
+
+  <h2>Presets</h2>
+  <p>
+    The preset is the first thing chosen, and it moves the defaults of everything below it —
+    so the panel always shows <em>the selected preset's</em> values, not a frozen copy of
+    another one's.
+  </p>
   <table>
-    <thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead>
+    <thead><tr><th>Preset</th><th>For</th></tr></thead>
+    <tbody>
+      <tr><td><code>3dgs</code></td><td>The default. Ordinary captures</td></tr>
+      <tr><td><code>360-camera</code></td><td>Equirectangular / fisheye rigs</td></tr>
+      <tr><td><code>in-the-wild</code></td><td>Varying exposure and passers-by</td></tr>
+      <tr><td><code>meshing</code></td><td>When step 5 is the point — tuned for surface extraction rather than for looks</td></tr>
+      <tr><td><code>linear-color</code>, <code>synthetic</code>, <code>academic-baseline</code></td><td>Special cases</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Key settings</h2>
+  <table>
+    <thead><tr><th>Setting</th><th>Note</th></tr></thead>
     <tbody>
       <tr>
         <td>Iterations</td>
-        <td><code>30 000</code></td>
-        <td>Training steps — more = better quality but slower</td>
+        <td>30 000 is the usual full run. A 30 000-step run on a 238-frame project measured
+            about <strong>16 minutes</strong> on this class of machine; a few hundred steps
+            is enough to check the framing</td>
       </tr>
       <tr>
-        <td>Densification interval</td>
-        <td><code>100</code></td>
-        <td>How often to split/clone Gaussians</td>
+        <td>Max splats</td>
+        <td>The cap. If the run reaches it, the panel says so — the picture is being limited
+            rather than converged</td>
       </tr>
       <tr>
         <td>SH degree</td>
-        <td><code>3</code></td>
-        <td>Spherical harmonics degree (view-dependent colour)</td>
+        <td>Spherical harmonics — view-dependent colour. Degree 3 is the usual; it is also
+            about <strong>three quarters of the file size</strong>, which the export panel
+            below can drop</td>
+      </tr>
+      <tr>
+        <td>Use masks</td>
+        <td>On when <code>masks/</code> exists. Masked pixels are <strong>trained as
+            empty</strong>, which removes the background and leaves the subject — the merely
+            "ignore" behaviour is measurably indistinguishable from no masks at all, so it
+            is not offered</td>
+      </tr>
+      <tr>
+        <td>Use depths / normals</td>
+        <td>On when the geometry pass has written them; otherwise the step explicitly tells
+            the trainer there are none rather than pointing it at an empty directory</td>
       </tr>
     </tbody>
   </table>
 
-  <h2>How to use</h2>
-  <ol>
-    <li>Confirm LFS path is set in <strong>Settings</strong>.</li>
-    <li>Adjust iteration count if needed (30 k is the standard).</li>
-    <li>Click <strong>Run Step 4</strong>.</li>
-    <li>Watch the Live Log for per-iteration loss values.</li>
-  </ol>
-
   <div class="tip">
-    A 30 000-iteration run on an RTX 3080 typically takes 10–20 minutes for
-    ~200 frames.
+    A knob left unset means "the preset decides", and it stays off the command line. The
+    log and the result record what the run <em>resolved</em> to either way.
   </div>
 
+  <h2>The geometry pass (optional, before training)</h2>
+  <p>
+    <code>spirula geometry</code> writes a per-image <strong>normal</strong> map — and
+    optionally a depth map — into the SfM workspace, where the trainer picks them up by
+    name. It is off by default, it is re-runnable on its own, and it never marks the step
+    done or failed.
+  </p>
+  <ul>
+    <li><strong>Depth is off</strong> on purpose: normals are what a reconstruction usually
+        wants, and depth doubles both the disk cost and the reading the training does.</li>
+    <li>An aborted pass is cheap to resume — without <em>Overwrite</em>, a new run continues
+        where the last one stopped.</li>
+    <li>It needs a <strong>geometry checkpoint</strong>. Install one from Setup →
+        Checkpoints first; otherwise the first run downloads several hundred MB in the
+        middle of the pass.</li>
+  </ul>
+
   <div class="warn">
-    Requires a CUDA-capable NVIDIA GPU. CPU training is not supported.
+    Changing the normal format writes the new maps <em>beside</em> the old ones rather than
+    over them. The run counts the leftovers of the other format and names them — which of
+    the two the trainer then reads is not something to leave to chance.
+  </div>
+
+  <h2>Reading the run</h2>
+  <p>
+    The progress line carries <strong>step N/M</strong>, the live splat count, an ETA, and
+    <code>rgb_loss</code>, <code>ssim</code>, <code>psnr</code>. The bar maps the step count
+    onto 5–95 %: a run loads its dataset before step 1 and writes a checkpoint after the
+    last.
+  </p>
+  <div class="tip">
+    <strong>The live splat count is not the count in the file.</strong> The final prune runs
+    after the last progress line, so a run that printed a million can write appreciably
+    fewer. The result panel shows both: the live count, and the real count read off the
+    written PLY.
+  </div>
+
+  <h2>The viewer, the crop and the saved view</h2>
+  <p>
+    The trained splat renders here, sorted and alpha-blended. Three things live on it:
+  </p>
+  <ul>
+    <li><strong>Crop volumes</strong> — add boxes and spheres, drag them with the gizmo, and
+        mark each one <em>keep</em> or <em>delete</em>. The rule is
+        <em>(inside a keep volume, or there are none) and (inside no delete volume)</em>, so
+        <strong>delete always wins</strong> and a single delete sphere is a complete crop.
+        Up to eight volumes.</li>
+    <li><strong>Live cut</strong> — the preview hides what the volumes exclude, in real time.
+        It is only a preview.</li>
+    <li><strong>Save view</strong> — stores the camera exactly as it stands. A splat has no
+        front; this is how the export ships with one.</li>
+  </ul>
+
+  <div class="warn">
+    <strong>The live cut is not the crop.</strong> Nothing on disk changes until you press
+    <strong>Apply crop</strong>, which writes a separate <code>train/crop/splat.ply</code>
+    beside the trained one — so a crop is undone by deleting one directory, and a re-crop
+    always starts from the full splat. The panel warns when a crop is <em>stale</em> (the
+    volumes moved since it was applied) and the export warns when volumes are placed but
+    never applied.
+  </div>
+
+  <p>
+    Step 5 prefers the cropped file when there is one, and says which file it got.
+  </p>
+
+  <h2>The export panel (the last thing on the page)</h2>
+  <p>
+    A <strong>deliverable copy</strong> of the splat, for a web viewer, a client or a phone.
+    It is the opposite of the crop: <strong>nothing in the pipeline reads it</strong>. It
+    lands in <code>train/export/</code> and step 5 never sees it.
+  </p>
+  <table>
+    <thead><tr><th>Format</th><th>Rough size, from a 24 MB source</th><th>Needs</th></tr></thead>
+    <tbody>
+      <tr><td><code>ply</code></td><td>the source, byte for byte, unless you reduce it</td><td>nothing</td></tr>
+      <tr><td><code>splat</code></td><td>≈ 8× smaller (a 32-byte record)</td><td>nothing</td></tr>
+      <tr><td><code>compressed-ply</code></td><td>≈ 4×</td><td rowspan="3"><code>@playcanvas/splat-transform</code> — optional, greyed out with the install line when absent</td></tr>
+      <tr><td><code>spz</code></td><td>≈ 16×</td></tr>
+      <tr><td><code>sog</code></td><td>≈ 20×</td></tr>
+    </tbody>
+  </table>
+  <h3>Reductions — every one ships off</h3>
+  <ul>
+    <li><strong>SH degree 3 → 0</strong> drops all 45 harmonic coefficients: about
+        <strong>3.6×</strong> smaller with <em>no geometry loss at all</em>. The single best
+        trade in the list. 3 → 1 keeps some view-dependence at 2.4×.</li>
+    <li><strong>Opacity floor</strong> — not free housekeeping here. Spirula trains at low
+        opacity by design, so the 1/255 threshold other toolchains ship drops around 1 %,
+        and anything high enough to matter is an edit of the picture (0.05 dropped 43 %).</li>
+    <li><strong>Target count</strong> — keeps the most important gaussians, scored by
+        opacity × volume. The score is <em>approximate</em> and labelled so, and nothing is
+        re-fitted afterwards: a deep cut thins the picture rather than simplifying it.</li>
+  </ul>
+  <div class="tip">
+    The saved view rides out with the file: a <code>.ply</code> carries it in its header, and
+    every other format gets a small <code>.viewpoint.json</code> beside it.
   </div>
 
   <h2>Output</h2>
-  <p>
-    Final <code>point_cloud.ply</code> and checkpoints saved to
-    <code>projects/&lt;name&gt;/lfs_output/</code>.
-  </p>
+  <ul>
+    <li><code>train/run/step-*.ckpt/splat.ply</code> — the trained splat. One checkpoint
+        survives a run by default.</li>
+    <li><code>train/crop/splat.ply</code> — the cut, when Apply crop was pressed.</li>
+    <li><code>train/export/</code> — the deliverable copies and their sidecars.</li>
+  </ul>
+
+  <div class="warn">
+    Re-running the training deletes all three — they are all derived from a splat that is
+    being replaced. The <strong>crop volumes, the saved view and the export plan survive</strong>:
+    they are stored on the project, and the frame they are expressed in comes from the SfM
+    model, which a re-train does not touch.
+  </div>
 
   <h2>Troubleshooting</h2>
   <ul>
-    <li><strong>CUDA out of memory</strong> — Reduce image resolution or frame count.</li>
-    <li><strong>Loss diverges</strong> — Check camera alignment quality in Step 3.</li>
-    <li><strong>LFS not found</strong> — Verify the Lichtfeld Studio path in Settings.</li>
+    <li><strong>The masks appear to do nothing</strong> — check the mask count in the log.
+        A mask directory that is empty or wrong trains unmasked and still exits 0, which is
+        exactly why the count is printed.</li>
+    <li><strong>The run hit the splat cap</strong> — raise Max splats, or accept it; the
+        panel says which happened.</li>
+    <li><strong>Low psnr</strong> — look back at step 3. A poor reconstruction cannot be
+        fixed by more iterations.</li>
+    <li><strong>The scene looks cropped but the export is full-size</strong> — the volumes
+        were never applied. Press Apply crop.</li>
+    <li><strong>Out of video memory</strong> — lower the training quality or the max splats,
+        or extract at a smaller scale.</li>
   </ul>
 
 </body>

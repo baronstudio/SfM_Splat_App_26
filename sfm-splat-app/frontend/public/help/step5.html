@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Step 5 — Export PLY</title>
+  <title>Step 5 — Mesh &amp; delivery</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -12,64 +12,178 @@
     <a href="index.html">Home</a>
     <a href="step1.html">1 · Import</a>
     <a href="step2.html">2 · Extract</a>
-    <a href="step3.html">3 · RC</a>
-    <a href="step4.html">4 · LFS</a>
-    <a href="step5.html" class="active">5 · Export</a>
+    <a href="step3.html">3 · SfM</a>
+    <a href="step4.html">4 · Train</a>
+    <a href="step5.html" class="active">5 · Mesh</a>
   </nav>
 
   <div class="step-header">
     <div class="step-number">5</div>
-    <div class="step-title">Export PLY</div>
+    <div class="step-title">Mesh extraction &amp; delivery</div>
   </div>
 
   <h2>Purpose</h2>
   <p>
-    Optimise and re-export the raw <code>.ply</code> from Step 4 using
-    <strong>SuperSplat</strong> — a web-based Gaussian Splat editor.
-    This step removes outliers, reorders splats for faster streaming,
-    and optionally compresses the output.
+    Run <code>spirula mesh</code> to extract a surface from the trained Gaussian splat and
+    colour it from the cameras solved in step 3. Then fill <code>export/</code>, the
+    delivery drawer. <strong>The pipeline ends here.</strong>
   </p>
 
-  <h2>Export options</h2>
+  <div class="tip">
+    <strong>It meshes the crop when there is one.</strong> If step 4's crop was applied, that
+    is the file this step reads — a mesh of the trimmed scene and a mesh of the whole room
+    are the same command and very different results, so the panel and the log both name
+    which file was used.
+  </div>
+
+  <h2>Formats and colour — the one enforced pair</h2>
   <table>
-    <thead><tr><th>Option</th><th>Description</th></tr></thead>
+    <thead><tr><th>Format</th><th>Colour it can carry</th></tr></thead>
+    <tbody>
+      <tr><td><strong>GLB</strong> <span class="badge badge-blue">default</span></td><td>Texture inside the file. The only one the viewer here can open</td></tr>
+      <tr><td><strong>glTF</strong></td><td>Texture beside it, as separate files</td></tr>
+      <tr><td><strong>OBJ</strong></td><td><strong>Texture only</strong> — OBJ carries no vertex colours</td></tr>
+      <tr><td><strong>PLY</strong></td><td><strong>Vertex colour only</strong> — PLY carries no texture</td></tr>
+    </tbody>
+  </table>
+
+  <div class="warn">
+    An impossible pair — PLY with a texture, OBJ with vertex colours — is <strong>refused
+    before the run</strong> and the button is disabled on it. This is not fussiness: the
+    tool does not skip the offending format, it exits having written <em>nothing at all</em>,
+    not even the GLB it could have made. Losing a several-minute mesh to that is worth one
+    disabled button.
+  </div>
+
+  <h2>Settings</h2>
+  <table>
+    <thead><tr><th>Setting</th><th>Default</th><th>What it does</th></tr></thead>
     <tbody>
       <tr>
-        <td>Compress (SPLAT)</td>
-        <td>Export as <code>.splat</code> binary — ~4× smaller than raw PLY</td>
+        <td>Colour</td>
+        <td><code>vertex</code></td>
+        <td>None, vertex colour, or a baked <strong>texture atlas</strong>. The atlas looks
+            far better and is the slowest phase of the run</td>
       </tr>
       <tr>
-        <td>Keep raw PLY</td>
-        <td>Also keep the original <code>point_cloud.ply</code></td>
+        <td>Texture size</td>
+        <td><code>auto</code></td>
+        <td>0 lets the tool pick from the texel density it measured. The run reports the size
+            it chose and the coverage it achieved</td>
       </tr>
       <tr>
-        <td>Remove outliers</td>
-        <td>Filter Gaussians with low opacity or extreme scale</td>
+        <td>Texture encoding</td>
+        <td><code>png</code></td>
+        <td>PNG, or JPEG at q95 / q75 for a much smaller file</td>
+      </tr>
+      <tr>
+        <td>Use cameras</td>
+        <td><span class="badge badge-green">on</span></td>
+        <td>The cameras decide occupancy and colour. Off meshes from the Gaussian densities
+            alone — a fallback, not an improvement</td>
+      </tr>
+      <tr>
+        <td>Max grid resolution</td>
+        <td><code>512</code></td>
+        <td>The detail ceiling of the extraction, and the main cost knob</td>
+      </tr>
+      <tr>
+        <td>Cull unseen</td>
+        <td><span class="badge badge-green">on</span></td>
+        <td>Drops surface no camera ever saw. It leaves open boundaries — which is why the
+            viewer draws both sides of every face</td>
+      </tr>
+      <tr>
+        <td>Floater minimum faces</td>
+        <td><code>100</code></td>
+        <td>Removes small disconnected islands</td>
+      </tr>
+      <tr>
+        <td>Quality iterations</td>
+        <td><code>3</code></td>
+        <td>Passes of the mesh cleanup</td>
       </tr>
     </tbody>
   </table>
 
-  <h2>How to use</h2>
-  <ol>
-    <li>Review the preview in the <strong>PLY Viewer</strong> panel (bottom of the center area).</li>
-    <li>Configure export options.</li>
-    <li>Click <strong>Run Step 5</strong>.</li>
-  </ol>
-
+  <h2>Reading the run</h2>
+  <p>
+    The log names each phase — loading, point cloud, Delaunay, occupancy, cut edges,
+    bisection, marching tets, merge, cull unseen, cleanup, quality, orient, texel density,
+    UV, bake, colour, texture. Three of them render every camera in turn, and those are the
+    long ones.
+  </p>
   <div class="tip">
-    The <code>.splat</code> format is recommended for web deployment (PlayCanvas, Three.js).
+    Some phases report no number at all, so the bar rests on that phase's floor instead of
+    inventing a percentage inside it. A step that has been running with no progress message
+    switches to indeterminate stripes and an elapsed count — "31 %, and nothing since" is
+    more use than a frozen bar.
   </div>
 
-  <h2>Output</h2>
+  <table>
+    <thead><tr><th>Figure</th><th>What to look for</th></tr></thead>
+    <tbody>
+      <tr><td><strong>vertices / faces</strong></td><td>The size of the surface</td></tr>
+      <tr><td><strong>components</strong></td><td>Disconnected pieces. A high count means floaters survived — raise the floater minimum</td></tr>
+      <tr><td><strong>texture</strong></td><td>The atlas size the run chose</td></tr>
+      <tr><td><strong>coverage</strong></td><td>How much of that atlas carries real texels. Very low coverage means the size was larger than the surface needed</td></tr>
+    </tbody>
+  </table>
+
+  <h2>The viewer</h2>
   <p>
-    Exported files saved to <code>projects/&lt;name&gt;/export/</code>.
+    The mesh loads as it was written — there is no decimated preview, because a textured GLB
+    is already small next to the splat it came from. A <strong>wireframe</strong> toggle
+    draws the triangles: a surface that looks solid and a surface that <em>is</em> solid are
+    the same picture until you see the edges.
   </p>
+  <p>
+    Only glTF is shown. A PLY-only mesh would be read as a plain point cloud and drawn as its
+    vertices — a different picture, not a cheaper one.
+  </p>
+
+  <h2>The delivery drawer</h2>
+  <p>
+    The second half of this step fills <code>export/</code> with the splat it meshed and the
+    mesh it wrote. They are <strong>hard links</strong>, not copies — the splat can be
+    hundreds of megabytes and there is no reason for a second set of the same bytes.
+  </p>
+  <div class="tip">
+    That is safe both ways round: resetting step 5 drops the drawer and leaves the training
+    output, resetting step 4 drops the training output and leaves the drawer holding the
+    bytes. Nothing in the app ever writes <em>into</em> an exported file.
+  </div>
+  <p>
+    For a reduced or compressed splat — SOG, SPZ, <code>.splat</code>, an SH-cut PLY, with the
+    saved viewpoint attached — use the export panel at the bottom of
+    <a href="step4.html">step 4</a> instead. That one is a deliverable; this drawer is the
+    pipeline's own output.
+  </p>
+
+  <h2>Output</h2>
+  <ul>
+    <li><code>mesh/</code> — <code>mesh.glb</code> / <code>.gltf</code> / <code>.obj</code> /
+        <code>.ply</code>, and the run's own result record.</li>
+    <li><code>export/</code> — <code>splat.ply</code> and the mesh files, as links.</li>
+  </ul>
+
+  <div class="warn">
+    Re-running this step clears both directories before it writes a byte.
+  </div>
 
   <h2>Troubleshooting</h2>
   <ul>
-    <li><strong>SuperSplat not responding</strong> — The PLY file may be corrupt; re-run Step 4.</li>
-    <li><strong>File too large</strong> — Enable compression or reduce iterations in Step 4.</li>
-    <li><strong>Artefacts in export</strong> — Enable "Remove outliers" option.</li>
+    <li><strong>The run is refused before it starts</strong> — an impossible format/colour
+        pair; the message says which.</li>
+    <li><strong>Holes in the surface</strong> — <em>Cull unseen</em> removed geometry no
+        camera saw. More coverage in the capture is the real fix; turning the cull off trades
+        holes for invented surface.</li>
+    <li><strong>Thousands of components</strong> — floaters in the splat. Crop them out in
+        step 4, or raise the floater minimum.</li>
+    <li><strong>The mesh includes the whole room</strong> — the splat did too. Crop in step 4
+        and re-mesh; this step will read the crop.</li>
+    <li><strong>Very slow</strong> — the texture atlas and the camera loops dominate. Vertex
+        colour, or a lower grid resolution, is much faster.</li>
   </ul>
 
 </body>
