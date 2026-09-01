@@ -18,6 +18,13 @@ class Project(SQLModel, table=True):
     step_status: str = "{}"
     input_video_path: Optional[str] = None
     frame_count: int = 0
+    # Capture metadata, typed by the user and read by nothing in the pipeline:
+    # how the footage was shot, and what the project is. Columns rather than
+    # keys in `settings_json`, which §4 reserves for per-step overrides of a
+    # `defaults.json` section — these have no default anything could inherit,
+    # and the project list draws the author without parsing a blob.
+    footage_author: Optional[str] = None
+    description: Optional[str] = None
     settings_json: str = "{}"
     error_message: Optional[str] = None
     # Archived: the files live in a .zip under projects/_archives/ and the row

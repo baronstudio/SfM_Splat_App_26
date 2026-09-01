@@ -18,8 +18,9 @@ import { useProjects } from '@/hooks/useProjects';
 import { usePipelineStore } from '@/store/pipelineStore';
 import {
   Plus, Trash2, PlayCircle, ImageOff, MoreVertical, Copy, RotateCcw,
-  Archive, ArchiveRestore, Loader2, FolderOpen, Clock, PenLine,
+  Archive, ArchiveRestore, Loader2, FolderOpen, Clock, PenLine, Video,
 } from 'lucide-react';
+import { absoluteDate, relativeDate } from '@/lib/dates';
 import type { Project, StepStatus } from '@/types';
 import { RESETTABLE_STEPS } from '@/types';
 
@@ -33,37 +34,6 @@ const STEP_LABELS: Record<number, string> = {
 };
 
 const TOTAL_STEPS = 5;
-
-/**
- * The backend serialises naive UTC datetimes, with no offset. `new Date()`
- * reads those as *local* time, which on a UTC+2 machine dates every project two
- * hours in the future and prints "just now" for an hour. Stamp the Z back on.
- */
-function parseUtc(isoString: string): Date {
-  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(isoString);
-  return new Date(hasZone ? isoString : `${isoString}Z`);
-}
-
-function relativeDate(isoString: string): string {
-  const diff = Date.now() - parseUtc(isoString).getTime();
-  const seconds = Math.max(0, Math.floor(diff / 1000));
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days} day${days > 1 ? 's' : ''} ago`;
-  const months = Math.floor(days / 30);
-  return `${months} month${months > 1 ? 's' : ''} ago`;
-}
-
-function absoluteDate(isoString: string): string {
-  return parseUtc(isoString).toLocaleString(undefined, {
-    year: 'numeric', month: 'short', day: '2-digit',
-    hour: '2-digit', minute: '2-digit',
-  });
-}
 
 function errorMessage(err: unknown): string {
   const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
@@ -212,7 +182,19 @@ export const ProjectList: React.FC<ProjectListProps> = ({
                   {/* Info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-slate-100 truncate">{p.name}</p>
+                      <p className="text-sm font-medium text-slate-100 truncate min-w-0">{p.name}</p>
+                      {/* Footage author — the one piece of project info on the
+                          tile, on the name's own line. The rest is in the
+                          wizard's Project info panel. */}
+                      {p.footage_author && (
+                        <span
+                          className="flex items-center gap-1 min-w-0 text-[11px] text-slate-400 truncate"
+                          title={`Footage author: ${p.footage_author}`}
+                        >
+                          <Video className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{p.footage_author}</span>
+                        </span>
+                      )}
                       {p.archived && (
                         <Badge variant="outline" className="text-[10px] px-1 py-0 text-amber-400 border-amber-700/60">
                           Archived

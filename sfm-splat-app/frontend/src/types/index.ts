@@ -8,6 +8,10 @@ export interface Project {
   step_status: Record<string, string>;
   input_video_path: string | null;
   frame_count: number;
+  /** How the footage was shot — free text, shown on the project tile. */
+  footage_author: string | null;
+  /** What the project is — free text, shown in the Project info panel. */
+  description: string | null;
   settings_json: string;
   error_message: string | null;
   thumbnail_url: string | null;

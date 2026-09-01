@@ -133,6 +133,10 @@ def project_to_dict(project: Project) -> dict:
         "step_status": project.get_step_status(),
         "input_video_path": project.input_video_path,
         "frame_count": project.frame_count,
+        # Capture metadata (§4): free text, shown on the tile and in the
+        # wizard's Project info panel, read by no step.
+        "footage_author": project.footage_author,
+        "description": project.description,
         "settings_json": project.settings_json,
         "error_message": project.error_message,
         "thumbnail_url": _get_thumbnail_url(project.slug),
@@ -148,10 +152,14 @@ def project_to_dict(project: Project) -> dict:
 class CreateProjectBody(BaseModel):
     name: str
     settings: Optional[dict] = None
+    footage_author: Optional[str] = None
+    description: Optional[str] = None
 
 
 class UpdateProjectBody(BaseModel):
     name: Optional[str] = None
+    footage_author: Optional[str] = None
+    description: Optional[str] = None
     current_step: Optional[int] = None
     step_status: Optional[dict] = None
     settings_json: Optional[dict] = None
@@ -170,6 +178,8 @@ async def create_project(
     project = Project(
         name=body.name,
         slug=slug,
+        footage_author=body.footage_author,
+        description=body.description,
         settings_json=json.dumps(body.settings) if body.settings else "{}",
     )
     session.add(project)
@@ -283,6 +293,8 @@ async def copy_project(
     clone = Project(
         name=name,
         slug=slug,
+        footage_author=source.footage_author,
+        description=source.description,
         current_step=source.current_step,
         step_status=source.step_status,
         frame_count=source.frame_count,
@@ -729,6 +741,10 @@ async def update_project(
 
     if body.name is not None:
         project.name = body.name
+    if body.footage_author is not None:
+        project.footage_author = body.footage_author or None
+    if body.description is not None:
+        project.description = body.description or None
     if body.current_step is not None:
         project.current_step = body.current_step
     if body.step_status is not None:
@@ -750,6 +766,9 @@ class PatchProjectBody(BaseModel):
     """Partial update. Anything omitted is left alone."""
 
     name: Optional[str] = None
+    # Free text, both cleared by sending "" — omitted leaves them alone.
+    footage_author: Optional[str] = None
+    description: Optional[str] = None
     current_step: Optional[int] = None
     step_status: Optional[dict] = None
     error_message: Optional[str] = None
@@ -779,6 +798,10 @@ async def patch_project(
 
     if body.name is not None:
         project.name = body.name
+    if body.footage_author is not None:
+        project.footage_author = body.footage_author or None
+    if body.description is not None:
+        project.description = body.description or None
     if body.current_step is not None:
         project.current_step = body.current_step
     if body.step_status is not None:

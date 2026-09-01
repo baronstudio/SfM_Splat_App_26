@@ -16,6 +16,7 @@ import LiveLog from '@/components/panels/LiveLog';
 import HelpPanel from '@/components/panels/HelpPanel';
 import AppSetupPanel from '@/components/settings/AppSetupPanel';
 import ProjectOperationDialog from '@/components/projects/ProjectOperationDialog';
+import ProjectInfoPanel from '@/components/projects/ProjectInfoPanel';
 import { usePipelineStore } from '@/store/pipelineStore';
 import { usePipeline } from '@/hooks/usePipeline';
 import { useProjects } from '@/hooks/useProjects';
@@ -190,6 +191,7 @@ const WizardShell: React.FC<{ onBackToHome?: () => void }> = ({ onBackToHome }) 
           {/* LEFT: Step navigator */}
           <aside className="w-[200px] shrink-0 border-r border-slate-700 overflow-y-auto">
             <StepNav />
+            <ProjectInfoPanel />
           </aside>
 
           {/* CENTER: Current step content */}

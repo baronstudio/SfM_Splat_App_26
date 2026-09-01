@@ -16,6 +16,8 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "project": [
         ("archived_at", "DATETIME"),
         ("archive_path", "VARCHAR"),
+        ("footage_author", "VARCHAR"),
+        ("description", "VARCHAR"),
     ],
 }
 
