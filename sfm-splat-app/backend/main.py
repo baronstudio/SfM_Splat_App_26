@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import mimetypes
 import sys
 from contextlib import asynccontextmanager
@@ -27,6 +28,31 @@ from backend.api.routes import (
 )
 from backend.core.pipeline_runner import reconcile_orphaned_steps
 from backend.db.database import create_db_and_tables
+
+# The gauge strip of CLAUDE.md 4.1 polls /api/hardware/live once a second on
+# every wizard step, and uvicorn logs one 200 OK per poll - 3600 lines an hour
+# of a request that says nothing, drowning the lines that do (the same argument
+# `_EXTRACT_NOISE` makes about the LiveLog's buffer). Only the access log is
+# filtered: an error still raises, and the route itself is untouched.
+_QUIET_ACCESS_PATHS = ("/api/hardware/live",)
+
+
+class _QuietPollFilter(logging.Filter):
+    """Drop uvicorn access lines for the once-a-second polling routes."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        # uvicorn.access formats (client, method, full_path, http_version, status).
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+            path = args[2].split("?", 1)[0]
+            return path not in _QUIET_ACCESS_PATHS
+        return True
+
+
+# Installed at import time: uvicorn's own dictConfig replaces a logger's
+# handlers but leaves its filters alone, so this holds whichever way the app is
+# started (uvicorn CLI, start.bat, or __main__ below).
+logging.getLogger("uvicorn.access").addFilter(_QuietPollFilter())
 
 PROJECTS_DIR = Path(__file__).parent.parent / "projects"
 PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
