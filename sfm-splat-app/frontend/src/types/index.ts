@@ -57,10 +57,56 @@ export type StepName =
 export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'aborted';
 export type LogLevel = 'INFO' | 'WARNING' | 'ERROR' | 'SUCCESS' | 'DEBUG';
 
+/**
+ * One pipeline run as the backend records it (`backend/core/jobs.py`).
+ *
+ * The row is what makes a run findable after the page that started it is gone:
+ * `pipelineRunning`, the bar and the 500-line log all live in this store, so a
+ * reload used to lose a 956-second training run entirely — no progress, no
+ * log, and no Abort button, which renders on `pipelineRunning`. The tool was
+ * working the whole time (TODO P7.1).
+ */
+export interface RunJob {
+  id: string;
+  project_id: string;
+  /** The run's own name on the bus — four of them attach to a step (§7.4-7.6c). */
+  kind: StepName;
+  /** The wizard step it reports into. */
+  step: number;
+  state: StepStatus;
+  progress: number;
+  message: string;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+  log_path: string | null;
+  log_lines: number;
+  /** How many times this run has been re-attached after a backend restart. */
+  adopted: number;
+  /** The tool's pid, when the run has one — shown when it was re-attached. */
+  pid: number | null;
+}
+
+/** One line of a run's log, as `/api/pipeline/jobs/{id}/log` returns it. */
+export interface JobLogEntry {
+  /** Line index in the file, for continuing a listing. */
+  i: number;
+  t: string;
+  step: string;
+  level: string;
+  message: string;
+  progress: number | null;
+  data?: WsMessage['data'];
+}
+
 export interface WsMessage {
   type: 'log' | 'progress' | 'metric' | 'status' | 'file_ready';
   step: string;
   timestamp: string;
+  /** Whose run this is. Absent on the project-operation bus (§13.7). */
+  project_id?: string;
+  /** Which run — set by `JobRecord.wrap`, so a restored client can tell. */
+  job_id?: string;
   level?: string;
   message?: string;
   progress?: number;

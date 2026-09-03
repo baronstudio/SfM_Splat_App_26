@@ -30,5 +30,11 @@ imgui.ini
 # SQLite project registry: one machine's state, rebuilt on first run.
 sfm-splat-app/pipeline.db
 
+# One ndjson log per pipeline run (backend/core/jobs.py), so a page that
+# reloads mid-run has a log tail to restore. Machine-local, pruned to the
+# last 200 runs, and outside `projects/` on purpose: a log describes a run,
+# not a reconstruction.
+sfm-splat-app/runs/
+
 # Editor scaffold: one machine, and it carries no project setting.
 *.code-workspace

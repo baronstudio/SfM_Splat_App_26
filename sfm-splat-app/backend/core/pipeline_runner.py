@@ -19,7 +19,15 @@ from sqlmodel import Session, select
 
 from backend.api.websocket import broadcast
 from backend.core.defaults import deep_merge
-from backend.core.proc import ProcessAborted, kill_project_children
+from backend.core import jobs as job_store
+from backend.core.jobs import JobRecord, start_job
+from backend.core.proc import (
+    ProcessAborted,
+    RunContext,
+    kill_project_children,
+    reset_run_context,
+    set_run_context,
+)
 from backend.core.steps.step_analyze import (
     AnalysisAborted,
     resolve_curate_settings,
@@ -45,6 +53,46 @@ PROJECTS_DIR = Path(__file__).parents[2] / "projects"
 
 _abort_flags: dict[str, bool] = {}
 _pause_events: dict[str, asyncio.Event] = {}
+
+
+def _install_run_context(job: JobRecord, adopt=None):
+    """Tell `proc.spawn` where this run's output goes, and what to re-attach to.
+
+    The steps never learn that a job record exists — they take the bus by
+    injection and call `spawn` as they always did (§2.4). This is the one place
+    that knows both, and it is what makes the child's stdout land in a file the
+    next backend can read (TODO P7.2).
+    """
+    return set_run_context(RunContext(
+        tool_log=job.tool_log_path,
+        adopt_pid=adopt.pid if adopt else None,
+        adopt_image=adopt.pid_image if adopt else None,
+        adopt_created=adopt.pid_created if adopt else None,
+        on_spawn=job.record_pid,
+    ))
+
+
+async def _announce_adoption(bus, job: JobRecord, adopt) -> None:
+    """Say, in the log, that this run is being rejoined rather than started.
+
+    It is the first line of the rebuilt transcript, and it has to be: everything
+    after it is a *replay* of output the tool produced before this process
+    existed, so a reader who did not know that would misread every timestamp.
+    """
+    lines = 0
+    try:
+        if job.tool_log_path and job.tool_log_path.exists():
+            lines = sum(1 for _ in open(job.tool_log_path, "rb"))
+    except OSError:
+        pass
+    await bus(
+        job.kind, "WARNING",
+        f"[run] Re-attached to a run that outlived the backend: "
+        f"{adopt.pid_image or 'the tool'} pid {adopt.pid}, started "
+        f"{adopt.started_at}Z, {lines} line(s) already in its transcript. "
+        f"Replaying them through this step, then following it live — nothing is "
+        f"re-run and nothing is deleted.",
+    )
 
 
 def _abort_checker(project_id: str):
@@ -135,7 +183,7 @@ def _debug(msg: str) -> None:
         print(line.encode(encoding, errors="replace").decode(encoding), flush=True)
 
 
-async def _broadcast_best_effort(*args, **kwargs) -> None:
+async def _broadcast_best_effort(bus, *args, **kwargs) -> None:
     """Broadcast from inside a cancellation handler.
 
     Awaiting in the `except CancelledError` branch of a task that has just been
@@ -144,7 +192,7 @@ async def _broadcast_best_effort(*args, **kwargs) -> None:
     "running" — swallow the second cancellation rather than the message.
     """
     try:
-        await asyncio.shield(broadcast(*args, **kwargs))
+        await asyncio.shield(bus(*args, **kwargs))
     except asyncio.CancelledError:
         pass
 
@@ -268,7 +316,7 @@ def _demote_if_still_running(project_id: str, reason: str) -> None:
     )
 
 
-def reconcile_orphaned_steps() -> int:
+def reconcile_orphaned_steps(skip: frozenset[str] = frozenset()) -> int:
     """Demote every step still persisted as "running" at process start.
 
     `step_status` is the only thing the wizard hydrates from, and nothing but a
@@ -278,13 +326,19 @@ def reconcile_orphaned_steps() -> int:
     only renders while `pipelineRunning` is true — which a fresh page load never
     is. The step becomes a dead end reachable only by editing the DB by hand.
 
-    Nothing survives a restart, so any "running" found here is by definition
-    stale. Demote it to "error" with a message that says what happened, rather
-    than to "pending", which would claim the step was never attempted.
+    Since P7.2 a restart re-attaches the runs whose child outlived it, and
+    `skip` is those projects: their steps are not stale. Everything else still
+    is — a step is moved off "running" only by a live run — so it is demoted to
+    "error" with a message that says what happened, rather than to "pending",
+    which would claim the step was never attempted.
     """
     swept = 0
     with Session(engine) as session:
         for project in session.exec(select(Project)).all():
+            # Not stale at all: this project's run was just re-attached and is
+            # still going, so its step really is running (TODO P7.2).
+            if project.id in skip:
+                continue
             status = project.get_step_status()
             stale = [k for k, v in status.items() if v == "running"]
             if not stale:
@@ -307,12 +361,51 @@ def reconcile_orphaned_steps() -> int:
     return swept
 
 
+# ── Re-attaching a run that outlived the backend (TODO P7.2) ─────────────────
+
+def adoption_plan() -> tuple[list, int]:
+    """What to re-attach to, and how many rows were closed instead.
+
+    Returns `([job rows], closed)`. The caller creates the tasks, because the
+    one-job-at-a-time slot (`_running_tasks`) belongs to the route module: an
+    adopted run that is not in that dict would leave `is_running` false, and a
+    project copy or reset could then start on top of a live step.
+    """
+    adoptable, orphans = job_store.adoption_candidates()
+    closed = job_store.close_orphaned_jobs(orphans)
+    for row in adoptable:
+        _debug(
+            f"  → adoption: {row.kind} of project {row.project_id} is still"
+            f" alive as {row.pid_image} pid {row.pid} — re-attaching"
+        )
+    return adoptable, closed
+
+
+def resume_run(job):
+    """The coroutine that re-enters the right runner for an adopted row.
+
+    Nothing new runs: the step is re-entered from the top, which re-reads its
+    inputs, skips its reset (`proc.adopting()`), attaches to the live child
+    instead of starting one, and replays the transcript through the parser that
+    wrote it. Which is why only the five single-command tool runs are adoptable
+    at all (`jobs.ADOPTABLE_KINDS`).
+    """
+    if job.kind in ("sfm", "train", "mesh"):
+        return run_pipeline(job.project_id, job.step, {}, adopt=job)
+    if job.kind == MASK_STEP_NAME:
+        return run_mask_generation(job.project_id, {}, adopt=job)
+    if job.kind == GEOMETRY_STEP_NAME:
+        return run_geometry_only(job.project_id, {}, adopt=job)
+    raise ValueError(f"{job.kind} is not an adoptable run")
+
+
 # ── Main orchestrator ────────────────────────────────────────────────────────
 
 async def run_pipeline(
     project_id: str,
     start_from_step: int = 1,
     settings: dict = {},
+    adopt=None,
 ) -> None:
     project = _get_project(project_id)
     if not project:
@@ -325,6 +418,35 @@ async def run_pipeline(
     # over the stored layer, never replaces it.
     settings = _with_project_settings(project, settings)
 
+    # Step 1 is always already done (handled at project creation), and each
+    # call runs exactly ONE step — the user validates and triggers the next one.
+    actual_start = max(start_from_step, 2)
+
+    # The run becomes a row on disk before it says a word, so every line it
+    # says is teed into that row's log and carries its project id (TODO P7.1).
+    # Without it a run was visible only to the browser that started it: a page
+    # reload lost the bar, the log and the Abort button, which is what made
+    # "the job died when I left the page" the obvious reading.
+    #
+    # `adopt` is that row coming back: a run whose child outlived the backend
+    # (P7.2). The step is re-entered from the top with its reset suppressed and
+    # `spawn` attaching to the live pid, so its own parser replays the
+    # transcript and then follows the tool live. The settings come from the row
+    # rather than from the project, because what this run *did* is what it has
+    # to report.
+    if adopt is not None:
+        job = job_store.from_row(adopt)
+        settings = job_store.stored_settings(adopt) or settings
+        job.reset_log()
+        job.mark_adopted((adopt.adopted or 0) + 1)
+    else:
+        job = start_job(
+            project_id, _STEP_NAMES[actual_start], actual_start, settings
+        )
+    bus = job.wrap(broadcast)
+    context_token = _install_run_context(job, adopt)
+    outcome, outcome_error = "error", "the run exited without reporting"
+
     # ── Debug: log invocation context ────────────────────────────────────────
     existing_statuses = project.get_step_status()
     _debug(
@@ -333,7 +455,7 @@ async def run_pipeline(
         f"  DB current_step={project.current_step}"
         f"  DB step_status={existing_statuses}"
     )
-    await broadcast(
+    await bus(
         "pipeline", "DEBUG",
         f"[WIZARD-DEBUG] run_pipeline called: project='{project.name}'"
         f" start_from_step={start_from_step}"
@@ -349,11 +471,10 @@ async def run_pipeline(
 
     step_status = project.get_step_status()
 
-    # Step 1 is always already done (handled at project creation).
-    # Each call runs exactly ONE step — the user validates and triggers the next one.
-    actual_start = max(start_from_step, 2)
-
     _debug(f"  → actual_start resolved to step {actual_start} ({_STEP_NAMES.get(actual_start, '?')})")
+
+    if adopt is not None:
+        await _announce_adoption(bus, job, adopt)
 
     try:
         for step in range(actual_start, actual_start + 1):
@@ -362,13 +483,14 @@ async def run_pipeline(
             # ── Abort check ────────────────────────────────────────────────
             if _abort_flags.get(project_id):
                 _debug(f"  → ABORT flag set before step {step} — aborting")
+                outcome, outcome_error = "aborted", None
                 step_status[str(step)] = "aborted"
                 _update_project(
                     project_id,
                     error_message="Pipeline aborted by user",
                     _step_status_dict=step_status,
                 )
-                await broadcast(
+                await bus(
                     "pipeline", "WARNING",
                     f"Pipeline aborted for project {project_id}",
                     data={"status": "aborted", "project_id": project_id},
@@ -381,7 +503,8 @@ async def run_pipeline(
             # Second abort check in case abort was set while paused
             if _abort_flags.get(project_id):
                 _debug(f"  → ABORT flag set after pause for step {step} — aborting")
-                await broadcast(
+                outcome, outcome_error = "aborted", None
+                await bus(
                     "pipeline", "WARNING",
                     f"Pipeline aborted for project {project_id}",
                     data={"status": "aborted", "project_id": project_id},
@@ -397,7 +520,7 @@ async def run_pipeline(
                 _step_status_dict=step_status,
             )
             # Broadcast a "status" message so the frontend can update stepStatuses[step] = 'running'
-            await broadcast(
+            await bus(
                 step_name, "INFO",
                 f"▶ Step {step} ({step_name.upper()}) starting...",
                 status="running",
@@ -408,17 +531,18 @@ async def run_pipeline(
                 runner = _STEP_RUNNERS[step]
                 if step in _ABORT_AWARE_STEPS:
                     await runner(
-                        project_path, broadcast, settings,
+                        project_path, bus, settings,
                         should_abort=_abort_checker(project_id),
                     )
                 else:
-                    await runner(project_path, broadcast, settings)
+                    await runner(project_path, bus, settings)
 
                 _debug(f"  → Step {step} ({step_name.upper()}) — DONE")
+                outcome, outcome_error = "done", None
                 step_status[str(step)] = "done"
                 _update_project(project_id, _step_status_dict=step_status)
                 # Broadcast "status" done + progress=1.0 so frontend marks step complete
-                await broadcast(
+                await bus(
                     step_name, "SUCCESS",
                     f"✔ Step {step} ({step_name.upper()}) complete."
                     f" ⏳ Waiting for user to click 'Validate & Continue'.",
@@ -439,9 +563,11 @@ async def run_pipeline(
                 # covers the other order: the tool was killed and its non-zero
                 # exit came back before the cancellation did.
                 _debug(f"  → Step {step} ({step_name.upper()}) — ABORTED by user")
+                outcome, outcome_error = "aborted", None
                 step_status[str(step)] = "aborted"
                 _update_project(project_id, _step_status_dict=step_status)
                 await _broadcast_best_effort(
+                    bus,
                     step_name, "WARNING",
                     f"■ Step {step} ({step_name.upper()}) aborted by user.",
                     status="aborted",
@@ -452,14 +578,16 @@ async def run_pipeline(
 
             except Exception as exc:
                 step_status[str(step)] = "error"
+                outcome = "error"
                 exc_detail = f"[{type(exc).__name__}] {exc}" if str(exc) else type(exc).__name__
                 _debug(f"  → Step {step} ({step_name.upper()}) — ERROR: {exc_detail}")
+                outcome_error = exc_detail
                 _update_project(
                     project_id,
                     error_message=exc_detail,
                     _step_status_dict=step_status,
                 )
-                await broadcast(
+                await bus(
                     step_name, "ERROR",
                     f"✖ Step {step} ({step_name.upper()}) failed: {exc_detail}",
                     status="error",
@@ -470,7 +598,7 @@ async def run_pipeline(
         if actual_start == 5:
             _debug(f"  → Full pipeline complete for project {project_id}")
             _update_project(project_id, current_step=5)
-            await broadcast(
+            await bus(
                 "pipeline", "SUCCESS",
                 f"🎉 Pipeline complete for project {project_id}",
                 progress=1.0,
@@ -479,9 +607,19 @@ async def run_pipeline(
 
     finally:
         _debug(f"  → run_pipeline cleanup for project {project_id}")
+        reset_run_context(context_token)
+        aborted = bool(_abort_flags.get(project_id))
         _abort_flags.pop(project_id, None)
         _pause_events.pop(project_id, None)
         _demote_if_still_running(project_id, "runner exited")
+        # A job row left on "running" is the same dead end one layer down from a
+        # step left on "running" (see reconcile_orphaned_steps), so the row
+        # closes however the task left — including on a BaseException no
+        # `except` clause above names.
+        if job.state == "running":
+            if outcome == "error" and aborted:
+                outcome, outcome_error = "aborted", None
+            job.finish(outcome, outcome_error)
 
 
 # ── Standalone re-analysis ───────────────────────────────────────────────────
@@ -504,6 +642,17 @@ async def run_analysis_only(project_id: str, settings: dict = {}) -> None:
     settings = _with_project_settings(project, settings)
     step_status = project.get_step_status()
 
+    # Its own job row, under its own name: curation is step 2's second phase and
+    # is separately re-runnable, so a re-analysis is a run in its own right and
+    # a page that reloads during one has to be able to find it (TODO P7.1).
+    job = start_job(project_id, "curate", 2, settings)
+    bus = job.wrap(broadcast)
+    # No subprocess in this pass — the curation is numpy in this process — but
+    # the context costs nothing and keeps one rule: anything a run spawns writes
+    # into that run's transcript.
+    context_token = _install_run_context(job)
+    outcome, outcome_error = "error", "the analysis exited without reporting"
+
     _abort_flags[project_id] = False
     pause_event = asyncio.Event()
     pause_event.set()
@@ -516,13 +665,14 @@ async def run_analysis_only(project_id: str, settings: dict = {}) -> None:
         _update_project(project_id, _step_status_dict=step_status)
 
         await run_analysis(
-            project_path, broadcast, settings,
+            project_path, bus, settings,
             should_abort=_abort_checker(project_id),
         )
 
+        outcome, outcome_error = "done", None
         step_status["2"] = "done"
         _update_project(project_id, _step_status_dict=step_status)
-        await broadcast("curate", "SUCCESS", "✔ Re-analysis complete.", status="done")
+        await bus("curate", "SUCCESS", "✔ Re-analysis complete.", status="done")
 
     except (AnalysisAborted, asyncio.CancelledError) as exc:
         # Two ways in: the cooperative flag, observed between chunks, or the hard
@@ -531,9 +681,11 @@ async def run_analysis_only(project_id: str, settings: dict = {}) -> None:
         # a bare `except Exception` it slips through and the UI stays stuck on
         # "running" forever.
         _debug(f"  → run_analysis_only ABORTED for project {project_id}")
+        outcome, outcome_error = "aborted", None
         step_status["2"] = "aborted"
         _update_project(project_id, _step_status_dict=step_status)
         await _broadcast_best_effort(
+            bus,
             "curate", "WARNING", "■ Re-analysis aborted by user.", status="aborted"
         )
         if isinstance(exc, asyncio.CancelledError):
@@ -542,14 +694,21 @@ async def run_analysis_only(project_id: str, settings: dict = {}) -> None:
     except Exception as exc:  # noqa: BLE001 — surfaced to the user verbatim
         exc_detail = f"[{type(exc).__name__}] {exc}" if str(exc) else type(exc).__name__
         _debug(f"  → run_analysis_only ERROR: {exc_detail}")
+        outcome, outcome_error = "error", exc_detail
         step_status["2"] = "error"
         _update_project(project_id, error_message=exc_detail, _step_status_dict=step_status)
-        await broadcast("curate", "ERROR", f"✖ Re-analysis failed: {exc_detail}", status="error")
+        await bus("curate", "ERROR", f"✖ Re-analysis failed: {exc_detail}", status="error")
 
     finally:
+        reset_run_context(context_token)
+        aborted = bool(_abort_flags.get(project_id))
         _abort_flags.pop(project_id, None)
         _pause_events.pop(project_id, None)
         _demote_if_still_running(project_id, "analysis exited")
+        if job.state == "running":
+            if outcome == "error" and aborted:
+                outcome, outcome_error = "aborted", None
+            job.finish(outcome, outcome_error)
 
 
 # ── Standalone mask generation ───────────────────────────────────────────────
@@ -563,6 +722,7 @@ async def _run_attached_pass(
     runner,
     opening: str,
     label: str,
+    adopt=None,
 ) -> None:
     """One re-runnable pass that *attaches* to a wizard step without being it.
 
@@ -599,18 +759,40 @@ async def _run_attached_pass(
     pause_event.set()
     _pause_events[project_id] = pause_event
 
+    # The pass gets a job row under its own name (`masks`, `geometry`, `crop`,
+    # `splat_export`) and carries the wizard step it attaches to, so a reload
+    # restores the bar on that step without claiming the step itself is running
+    # any differently than it was (TODO P7.1).
+    if adopt is not None:
+        # A `sam` or `geometry` child that outlived the backend (P7.2). Same
+        # re-entry as a step: reset suppressed, `spawn` attaching to the live
+        # pid, the pass's own parser replaying its transcript.
+        job = job_store.from_row(adopt)
+        settings = job_store.stored_settings(adopt) or settings
+        job.reset_log()
+        job.mark_adopted((adopt.adopted or 0) + 1)
+    else:
+        job = start_job(project_id, name, step, settings)
+    bus = job.wrap(broadcast)
+    context_token = _install_run_context(job, adopt)
+    outcome, outcome_error = "error", "the pass exited without reporting"
+
     _debug(f"{label} CALLED — project='{project.name}' ({project_id})")
+
+    if adopt is not None:
+        await _announce_adoption(bus, job, adopt)
 
     try:
         step_status[key] = "running"
         _update_project(project_id, _step_status_dict=step_status)
-        await broadcast(name, "INFO", opening, status="running")
+        await bus(name, "INFO", opening, status="running")
 
-        await runner(project_path, broadcast, settings)
+        await runner(project_path, bus, settings)
 
+        outcome, outcome_error = "done", None
         step_status[key] = previous
         _update_project(project_id, _step_status_dict=step_status)
-        await broadcast(
+        await bus(
             name, "SUCCESS", f"✔ {label} complete.", status=previous
         )
 
@@ -620,9 +802,11 @@ async def _run_attached_pass(
         # CancelledError derives from BaseException, so naming it is what stops
         # the step from being stuck on "running" until a page reload.
         _debug(f"  → {label} ABORTED for project {project_id}")
+        outcome, outcome_error = "aborted", None
         step_status[key] = previous
         _update_project(project_id, _step_status_dict=step_status)
         await _broadcast_best_effort(
+            bus,
             name, "WARNING", f"■ {label} aborted by user.", status="aborted",
         )
         if isinstance(exc, asyncio.CancelledError):
@@ -631,23 +815,30 @@ async def _run_attached_pass(
     except Exception as exc:  # noqa: BLE001 — surfaced to the user verbatim
         exc_detail = f"[{type(exc).__name__}] {exc}" if str(exc) else type(exc).__name__
         _debug(f"  → {label} ERROR: {exc_detail}")
+        outcome, outcome_error = "error", exc_detail
         # The wizard step is not in error — this pass is. Restoring it keeps a
         # failed mask run from painting a finished reconstruction red.
         step_status[key] = previous
         _update_project(
             project_id, error_message=exc_detail, _step_status_dict=step_status
         )
-        await broadcast(
+        await bus(
             name, "ERROR", f"✖ {label} failed: {exc_detail}", status="error",
         )
 
     finally:
+        reset_run_context(context_token)
+        aborted = bool(_abort_flags.get(project_id))
         _abort_flags.pop(project_id, None)
         _pause_events.pop(project_id, None)
         _demote_if_still_running(project_id, f"{label} exited")
+        if job.state == "running":
+            if outcome == "error" and aborted:
+                outcome, outcome_error = "aborted", None
+            job.finish(outcome, outcome_error)
 
 
-async def run_mask_generation(project_id: str, settings: dict = {}) -> None:
+async def run_mask_generation(project_id: str, settings: dict = {}, adopt=None) -> None:
     """Write `masks/` with `spirula sam` — never a re-alignment (§7.4).
 
     Attaches to wizard step 3 and broadcasts under the name `masks`, which the
@@ -661,10 +852,11 @@ async def run_mask_generation(project_id: str, settings: dict = {}) -> None:
         step=3, name=MASK_STEP_NAME, runner=_run_masking,
         opening="▶ Writing masks with spirula sam…",
         label="Mask generation",
+        adopt=adopt,
     )
 
 
-async def run_geometry_only(project_id: str, settings: dict = {}) -> None:
+async def run_geometry_only(project_id: str, settings: dict = {}, adopt=None) -> None:
     """Write `sfm/normals/` and `sfm/depths/` with `spirula geometry` (§7.5).
 
     Attaches to wizard step 4, whose training run reads them through `--data`
@@ -678,6 +870,7 @@ async def run_geometry_only(project_id: str, settings: dict = {}) -> None:
         step=4, name=GEOMETRY_STEP_NAME, runner=_run_geometry,
         opening="▶ Estimating depth and normal maps with spirula geometry…",
         label="Geometry supervision",
+        adopt=adopt,
     )
 
 

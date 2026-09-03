@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from backend.api.routes.pipeline import is_running
+from backend.core.jobs import delete_jobs_for_project
 from backend.api.websocket import broadcast
 from backend.core import imageset
 from backend.core.curate.select import DROP, KEEP
@@ -233,6 +234,11 @@ async def delete_project(id: str, session: Session = Depends(get_session)):
         archive = Path(project.archive_path)
         if archive.exists():
             archive.unlink()
+
+    # Its run history goes too, rows and log files alike: the job records of
+    # `core/jobs.py` are keyed by project id and nothing else would ever come
+    # back for them.
+    delete_jobs_for_project(id)
 
     session.delete(project)
     session.commit()

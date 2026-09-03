@@ -50,6 +50,8 @@ async def broadcast(
     data: Optional[dict] = None,
     file: Optional[str] = None,
     status: Optional[str] = None,
+    project_id: Optional[str] = None,
+    job_id: Optional[str] = None,
 ) -> None:
     """
     Broadcast a WebSocket message to all connected clients.
@@ -60,6 +62,14 @@ async def broadcast(
       file_ready → export file available
       progress   → numeric progress update
       log        → plain log line (default)
+
+    `project_id` rides along on everything a run broadcasts, because the bus is
+    one channel for the whole app and every consumer used to map a step name
+    onto whatever project happened to be open: step 4 of one project displayed
+    another's bar at 56 % with a live ETA (CLAUDE.md §13.7). The store drops a
+    message whose project is not the one on screen. `job_id` is what lets a
+    client that just reconnected tell the run it restored from the row from a
+    newer one that started meanwhile (`core/jobs.py`).
     """
     timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -87,5 +97,9 @@ async def broadcast(
         payload["file"] = file
     if status is not None:
         payload["status"] = status
+    if project_id is not None:
+        payload["project_id"] = project_id
+    if job_id is not None:
+        payload["job_id"] = job_id
 
     await manager.broadcast_json(payload)

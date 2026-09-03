@@ -10,6 +10,8 @@ import type {
   StepName,
   LogLevel,
   ProjectOperation,
+  RunJob,
+  JobLogEntry,
 } from '../types';
 
 const MAX_LOGS = 500;
@@ -78,6 +80,9 @@ interface PipelineState {
 
   // Hydrate wizard state from a persisted project (on project selection / page reload)
   hydrateFromProject: (project: Project) => void;
+
+  // Restore a run that was already going before this page existed (P7.1)
+  hydrateRun: (job: RunJob, entries: JobLogEntry[]) => void;
 
   // WebSocket message dispatcher
   handleWsMessage: (msg: WsMessage) => void;
@@ -361,9 +366,81 @@ export const usePipelineStore = create<PipelineState>()(
         });
       }),
 
+    // Restore a run that started before this page did (TODO P7.1).
+    //
+    // Everything that described a running step lived here and nowhere else, so
+    // a reload — or a browser opened on the LAN box halfway through — showed a
+    // step disabled on `running` with an empty log, a bar at zero and **no
+    // Abort button**, which renders on `pipelineRunning`. That is what made a
+    // run that was working perfectly read as a run the page had killed.
+    //
+    // The job row is the source: `useRunRecovery` fetches it and the tail of
+    // its log, and this folds both in. It sets the state the WS would have set
+    // had the client been listening, and nothing else — no request is made and
+    // no step is advanced.
+    hydrateRun: (job, entries) =>
+      set((state) => {
+        if (job.project_id !== state.currentProjectId) return;
+
+        state.pipelineRunning = true;
+        state.stepStatuses[job.step] = 'running';
+        state.currentStep = job.step;
+        // Keyed by the run's own name, not by the step: four passes attach to a
+        // step without being it, and `ProgressBar` reads the name.
+        state.stepProgress[job.kind] = job.progress;
+
+        entries.forEach((entry) => {
+          state.logs.push({
+            id: `restored-${job.id}-${entry.i}`,
+            timestamp: entry.t,
+            step: entry.step,
+            level: (entry.level as LogLevel) ?? 'INFO',
+            message: entry.message,
+          });
+          // The trainer puts its metrics on the same lines as its bar (§7.7),
+          // and they were teed with the text — so the chart comes back too,
+          // which for a 30 000-iteration run is the whole picture of the run.
+          if (entry.data) applyMetric(state, entry.data);
+        });
+        if (state.logs.length > MAX_LOGS) {
+          state.logs = state.logs.slice(state.logs.length - MAX_LOGS);
+        }
+
+        state.logs.push({
+          id: `restored-${job.id}-head`,
+          timestamp: new Date().toISOString(),
+          step: job.kind,
+          level: 'DEBUG',
+          message:
+            `[run] Rejoined a run already in progress: ${job.kind}`
+            + ` (step ${job.step}), started ${job.started_at}Z,`
+            + ` ${Math.round(job.progress * 100)} %,`
+            + ` ${entries.length} of ${job.log_lines} log lines restored.`
+            + (job.adopted
+              ? ` This run outlived a backend restart and was re-attached`
+                + `${job.adopted > 1 ? ` ${job.adopted} times` : ''}`
+                + `${job.pid ? ` (tool pid ${job.pid})` : ''}.`
+              : ''),
+        });
+      }),
+
     // WebSocket message dispatcher
     handleWsMessage: (msg) =>
       set((state) => {
+        // Not our run: the bus is one channel for the whole app, and every
+        // consumer maps a step name onto whatever project is open — so a run
+        // belonging to another project used to move this one's bar (CLAUDE.md
+        // §13.7, seen in P1.7 at 56 % with a live ETA). Only messages from a
+        // run carry a project id; the project-operation bus carries none and
+        // is deliberately global.
+        if (
+          msg.project_id
+          && state.currentProjectId
+          && msg.project_id !== state.currentProjectId
+        ) {
+          return;
+        }
+
         // Progress is read before the switch, whatever the message was typed
         // as. A message legitimately carries a metric *and* a progress value —
         // `spirula train` puts both on every one of its bar lines (§7.7) — and

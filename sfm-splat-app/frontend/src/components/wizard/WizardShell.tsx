@@ -21,6 +21,7 @@ import ProjectInfoPanel from '@/components/projects/ProjectInfoPanel';
 import { usePipelineStore } from '@/store/pipelineStore';
 import { usePipeline } from '@/hooks/usePipeline';
 import { useProjects } from '@/hooks/useProjects';
+import { useRunRecovery } from '@/hooks/useRunRecovery';
 
 const Step1 = lazy(() => import('./steps/Step1_Import'));
 const Step2 = lazy(() => import('./steps/Step2_Extract'));
@@ -40,6 +41,10 @@ const WizardShell: React.FC<{ onBackToHome?: () => void }> = ({ onBackToHome }) 
   const { currentProjectId, currentStep, projects, pipelineRunning, setCurrentProject, setCurrentStep, hydrateFromProject } = usePipelineStore();
   const { controlPipeline } = usePipeline();
   const { createProject, selectProject } = useProjects();
+  // A run started before this page existed is put back on screen here rather
+  // than in a step component: it must be found whichever step is open, and the
+  // Abort button lives in this shell (TODO P7.1).
+  useRunRecovery();
   const [logVisible, setLogVisible] = useState(true);
   const [helpVisible, setHelpVisible] = useState(true);
   const [setupOpen, setSetupOpen] = useState(false);

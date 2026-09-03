@@ -15,6 +15,8 @@ import zipfile
 from pathlib import Path
 from typing import Awaitable, Callable, Iterable, Optional
 
+from backend.core import proc
+
 # Directories created for every project (mirrors create_project).
 PROJECT_SUBDIRS = (
     "input",
@@ -95,7 +97,18 @@ def reset_steps(project_path: Path, steps: Iterable[int]) -> list[str]:
     `input/` is untouched by design; the preview cache goes as soon as any step
     that feeds it is reset, since it would otherwise show the previous run's
     cloud next to an empty output directory.
+
+    **Refused while a run is being re-attached** (TODO P7.2). Every step resets
+    its own output before it writes, on §14.1's "re-running a step is a reset of
+    that step" — but a step being *replayed* over a child that is still running
+    is not being re-run, and deleting `sfm/` under a live `spirula sfm auto`
+    would destroy the very reconstruction being rejoined. `proc.adopting()` is
+    true only inside that replay, so the `/reset` route and an ordinary re-run
+    are untouched.
     """
+    if proc.adopting():
+        return []
+
     steps = sorted({int(s) for s in steps if int(s) in STEP_ARTEFACTS})
     removed: list[str] = []
 

@@ -19,6 +19,18 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("footage_author", "VARCHAR"),
         ("description", "VARCHAR"),
     ],
+    # The run record grew the columns that let a run be adopted after a restart
+    # (TODO P7.2). `job` was created by P7.1, so an existing pipeline.db has the
+    # table without them.
+    "job": [
+        ("tool_log_path", "VARCHAR"),
+        ("pid", "INTEGER"),
+        ("pid_image", "VARCHAR"),
+        ("pid_created", "BIGINT"),
+        ("spawns", "INTEGER DEFAULT 0"),
+        ("adopted", "INTEGER DEFAULT 0"),
+        ("settings_json", "VARCHAR"),
+    ],
 }
 
 
@@ -36,6 +48,11 @@ def _add_missing_columns() -> None:
 
 
 def create_db_and_tables() -> None:
+    # Imported for its side effect: `create_all` only creates the tables that
+    # are in the metadata, and a model nothing has imported yet is not.
+    from backend.models import job as _job  # noqa: F401
+    from backend.models import project as _project  # noqa: F401
+
     SQLModel.metadata.create_all(engine)
     _add_missing_columns()
 

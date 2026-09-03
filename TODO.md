@@ -415,6 +415,103 @@ In the order they block something. See CLAUDE.md §13.
 
 ---
 
+## P7 — The run outlives the page
+
+**The premise was half wrong, and the half that is wrong decides the work.** JB reported
+that leaving or closing the page shuts the computation down server-side. Read end to end
+before anything was written: it does not. A run is an `asyncio.Task` created in the
+uvicorn process (`api/routes/pipeline.py`) and parked in `_running_tasks`; it is tied to
+neither the HTTP request that started it nor the socket, `/ws/logs` disconnect only drops
+that client from the broadcast list, and **no `beforeunload` anywhere in the frontend
+aborts anything** — the one caller of `/pipeline/control abort` is the toolbar button.
+The tool keeps working.
+
+**What dies is the view, completely**, and that is indistinguishable from a dead job:
+`pipelineRunning` is client-only state, the 500-line LiveLog and the bar live in memory,
+and `fetchStatus` — already written, at `usePipeline.ts` — **is called by nobody**. Come
+back mid-training and the step is disabled because the row says `running`, the log is
+empty, the bar is at zero, and there is **no Abort button**, because it renders on
+`pipelineRunning`. A dead end reachable by reloading a page.
+
+**What genuinely kills a run is the backend process restarting**, because everything
+holding it is in memory — the task, and `core/proc.py`'s `_LIVE` kill registry. So:
+`--reload` firing (both `start.bat` and `start.sh` pass it), the "Backend" window closed,
+Ctrl-C, a Windows logout. `reconcile_orphaned_steps` then demotes the step to `error`
+while the orphaned `spirula.exe` may still hold the GPU with nothing left to kill it by.
+CLAUDE.md §12's 2026-09-01 row already names this as why `sync_staging.sh` checks
+`/api/pipeline/status` before writing a `.py`.
+
+Two halves, in this order. The first is honesty — the UI must find a run it did not
+start; the second is durability — a run must survive the backend. They are independent,
+and the first is worth having on its own. **Both shipped 2026-09-03** (CLAUDE.md §15.4);
+what is left is P7.3, the run that finished while nobody was watching.
+
+### P7.1 The run becomes a record, not an object in memory ✅
+
+- [x] A `job` row in SQLite: id, project_id, kind (`extract | curate | sfm | masks |
+      geometry | train | crop | splat_export | mesh`), the wizard step it reports into,
+      state, progress, last message, error, started/finished. Written at every
+      transition, so `/api/pipeline/status` answers from the DB rather than from
+      `_running_tasks` — "is anything running" then survives anything.
+- [x] A log file per job, teed from the existing bus — one ndjson line per broadcast,
+      which is exactly what the LiveLog already consumes. **Outside `projects/`**
+      (`runs/<job_id>.ndjson`): a log is about a run, not about the reconstruction, so
+      §14.1 gains no row and no reset, copy or archive has to reason about it.
+- [x] `project_id` on every WS message, filtered in the store. Closes CLAUDE.md §13.7 —
+      the bar of one project showing another's run — and it is a precondition for a
+      reconnecting client that may have switched project meanwhile.
+- [x] Rehydration on mount and on project switch: call the `fetchStatus` that is already
+      there, restore step status, bar, log tail and `pipelineRunning` — which brings back
+      the Abort button.
+- [x] Close orphaned job rows at startup, beside the step sweep that already runs.
+
+### P7.2 The run survives the backend ✅
+
+The blocker was architectural: `proc.spawn` gave the child a **pipe**, and a pipe cannot
+outlive its reader. It writes to a file now, and the step replays its own parser over it.
+
+- [x] stdout to a **file**, not a pipe — the step tails `runs/<job_id>.tool.log`.
+      Measured: a process holding no handle tails what a *foreign* child writes (28 reads
+      over 6 s, 75 ms median lag), a line costs 10 ms median against the pipe, and
+      FFmpeg's `-progress pipe:1` still arrives live through a file (18 blocks over 10 s).
+- [x] The pid in the job record — with the image name **and the process creation time**,
+      so a recycled pid cannot be mistaken for the child. `abort` works after a restart
+      because `taskkill /F /T` acts on a pid and not on a handle we hold.
+- [x] Spawn `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, so a closed console does not
+      take the tree with it.
+- [x] `reconcile_orphaned_steps` **skips what was re-attached**; `adoption_candidates`
+      decides, through `OpenProcess` / `QueryFullProcessImageNameW` / `GetProcessTimes` /
+      `GetExitCodeProcess` in ctypes — no new dependency, §4.1's precedent.
+- [x] Re-entry is a **replay**, so not one step changed: reset refused
+      (`proc.adopting()`), `spawn` attaching to the pid, `iter_lines` reading the
+      transcript from byte 0. Watched: a hard-killed backend 31 % into a 6000-iteration
+      training run, `spirula.exe` still training with no backend, `re-attached 1 live
+      run(s)`, and a complete `train_result.json` — exit 0, 984 842 gaussians, psnr 31.84.
+- [x] `--reload` firing mid-run is no longer a lost run. It is still worth avoiding on
+      staging: a `.py` change under a live replay changes the code doing the replaying,
+      which is why `scripts/sync_staging.sh` checks `/api/pipeline/status` first.
+
+### P7.3 The run that finished while nobody was watching
+
+Turned up by P7.2's first run rather than predicted: a `spirula sfm auto` **completed
+with no backend at all** — 31.43 s, `RESULT: OK -- 100% of the images registered`,
+`sparse/0` complete on disk — and nothing was there to collect it, so `sfm_result.json`
+was never written and the step read as an error over a reconstruction that is fine.
+Windows keeps no exit code once the last handle to a process closes, so the run cannot
+be finalised from the pid. Today the row says exactly that and names the transcript.
+
+- [ ] Finalise from the transcript instead, using each tool's **own completion marker** —
+      the trainer's `Training complete. Steps: N`, `sfm auto`'s `RESULT:` line, `mesh`'s
+      `[meshing] done:`, `geometry`'s `done: N written`, `sam`'s `masks written: N`. Every
+      one of them is already parsed by the step that owns it, so the knowledge exists;
+      what is missing is a way for a step to say "the tool told me it finished" in place
+      of an exit code it cannot have.
+- [ ] Refuse to guess in the one case that matters: a transcript with **no** marker is an
+      interrupted run and must stay one. An invented exit 0 over a truncated
+      reconstruction is worse than the honest error this ships with (§2.2).
+
+---
+
 ## Not doing
 
 - `spirula sam extract` as step 2. Ours carries a measured 5× `-hwaccel`, the `scdet` cut

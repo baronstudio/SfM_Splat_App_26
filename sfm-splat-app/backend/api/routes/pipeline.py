@@ -5,8 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 
+from backend.core import jobs as job_store
 from backend.core.pipeline_runner import (
+    adoption_plan,
     request_abort,
+    resume_run,
     run_analysis_only,
     run_crop_only,
     run_geometry_only,
@@ -33,6 +36,24 @@ def is_running(project_id: str) -> bool:
     """
     task = _running_tasks.get(project_id)
     return task is not None and not task.done()
+
+
+def adopt_orphaned_runs() -> dict:
+    """Re-attach the runs whose tools outlived the last backend (TODO P7.2).
+
+    Called once from the app lifespan. It lives here rather than in the runner
+    because the one-job-at-a-time slot is this module's `_running_tasks`: an
+    adopted run missing from it would leave `is_running` false, and a project
+    copy, reset or archive could then start on top of a step that is still
+    writing to the directory.
+    """
+    rows, closed = adoption_plan()
+    adopted: list[str] = []
+    for row in rows:
+        task = asyncio.create_task(resume_run(row))
+        _running_tasks[row.project_id] = task
+        adopted.append(row.project_id)
+    return {"adopted": adopted, "closed": closed}
 
 
 class StartBody(BaseModel):
@@ -102,22 +123,59 @@ async def get_status(
     project_id: Optional[str] = None,
     session: Session = Depends(get_session),
 ):
+    """What is running, from the database rather than from this process's memory.
+
+    `_running_tasks` is the authority on whether *this* process still holds the
+    task, and the job row is the authority on whether a run was ever started
+    and how far it got — which is what a page that has just loaded needs. It
+    knew none of this before: `pipelineRunning` was client-side state, so a
+    reload lost the bar, the log and the Abort button while the tool kept
+    working (TODO P7.1).
+    """
     if project_id:
         project = session.get(Project, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         running = project_id in _running_tasks and not _running_tasks[project_id].done()
+        active = job_store.active_job(project_id)
         return {
             "project_id": project_id,
             "running": running,
             "current_step": project.current_step,
             "step_status": project.get_step_status(),
+            # The run to restore, or null. It survives the page; it does not yet
+            # survive the backend (P7.2), and the startup sweep closes any row
+            # that outlived its process — so a job reported here is live.
+            "job": active,
         }
 
     return [
         {"project_id": pid, "running": not task.done()}
         for pid, task in _running_tasks.items()
     ]
+
+
+@router.get("/jobs")
+async def list_jobs(project_id: Optional[str] = None, limit: int = 20):
+    """The recent runs, newest first — this project's or the whole machine's."""
+    return job_store.recent_jobs(project_id, min(max(limit, 1), 200))
+
+
+@router.get("/jobs/{job_id}/log")
+async def get_job_log(job_id: str, limit: int = 500, after: Optional[int] = None):
+    """One run's log lines: the tail by default, or everything after line `after`.
+
+    The tail is what a page load wants — the LiveLog keeps 500 lines and a run
+    in its fifteenth minute has more than that. Only the lines that carried
+    text are stored, which is what the panel keeps too: `step_mesh` rides the
+    bar on 354 of its 419 lines with an empty message precisely so neither sees
+    them (CLAUDE.md §7.8).
+    """
+    job = job_store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    entries, total = job_store.read_log(job, min(max(limit, 1), 5000), after)
+    return {"job_id": job_id, "total": total, "entries": entries}
 
 
 @router.post("/analyze")

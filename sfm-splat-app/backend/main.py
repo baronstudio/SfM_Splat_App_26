@@ -10,6 +10,20 @@ from pathlib import Path
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
+# The console is cp1252 on a French Windows, and every layer of this app puts
+# non-ASCII on it: the steps' own log lines carry ✔ / ■ / ▶, and `echo=True` on
+# the engine now prints the job row's `message` column as a bound parameter
+# (core/jobs.py). An unencodable character raises inside whoever is printing —
+# it killed the abort handler mid-way once already, which is what
+# `pipeline_runner._debug` works around by hand. Replacing rather than raising,
+# once, at the top, is the root fix: nothing about this app is worth an
+# exception in a print.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+    except (AttributeError, OSError):
+        pass
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,9 +75,24 @@ PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_db_and_tables()
-    # Nothing survives a restart: a step still persisted as "running" belongs to
-    # a run this process never started, and it would freeze that step's button.
-    swept = reconcile_orphaned_steps()
+    # First: re-attach whatever outlived the last backend. A tool spawned
+    # detached with its output going to a file keeps working when this process
+    # does not (TODO P7.2), so a `running` row is no longer stale by definition
+    # — it is stale only if its child is really gone. This closes the rows that
+    # cannot be rejoined and kills their orphaned tools, and hands back the
+    # projects whose runs it took over.
+    resumed = pipeline.adopt_orphaned_runs()
+    if resumed["adopted"]:
+        print(
+            f"[startup] re-attached {len(resumed['adopted'])} live run(s):"
+            f" {', '.join(resumed['adopted'])}",
+            flush=True,
+        )
+    if resumed["closed"]:
+        print(f"[startup] closed {resumed['closed']} orphaned job row(s)", flush=True)
+    # Then the step statuses, skipping the projects just re-attached: their
+    # steps are running because they *are* running.
+    swept = reconcile_orphaned_steps(skip=frozenset(resumed["adopted"]))
     if swept:
         print(f"[startup] reconciled {swept} project(s) with a stale 'running' step", flush=True)
     yield

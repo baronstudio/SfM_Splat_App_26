@@ -83,9 +83,11 @@ assume a rectilinear frame, and §7.4's shape masking exists for the lens border
    injection — it is what makes them callable from tests.
 5. **Simplicity over throughput.** No queues, no worker pools, no caching "for later".
 6. **Every job is cancellable**, and abort kills the tool's **process tree**
-   (`taskkill /F /T`), because that is what closes the pipe and unblocks the reader. It
+   (`taskkill /F /T`), because that is what closes the output and unblocks the reader. It
    is not optional here: `spirula geometry` shells out to `curl` for its checkpoint, so
-   the process that holds the work is not always the one we spawned.
+   the process that holds the work is not always the one we spawned. It works on a pid
+   and not on a handle we hold, which is what also makes it work on a run **re-attached**
+   after a backend restart (§15.4) — measured, not assumed.
 7. **Read the installed build, never remember it.** `spirula --version` is logged at the
    top of every run and recorded in the step result. No flag is invented; `docs/spirula/`
    holds the raw `--help` of every command and is the reference (§5.1).
@@ -247,12 +249,21 @@ about to run out should.
 sfm-splat-app/
 ├── config.json                 # installation (binary paths, model cache)
 ├── defaults.json               # business defaults + capture presets
-├── pipeline.db                 # SQLite: project registry only
+├── pipeline.db                 # SQLite: project registry + the run records (§15.4)
+├── runs/                       # ⚙ per run, and outside projects/ on purpose (§15.4):
+│                               #   <job_id>.ndjson   the bus, one line per message with
+│                               #                     text — the log tail a reloaded page
+│                               #                     restores
+│                               #   <job_id>.tool.log the tool's own stdout, verbatim —
+│                               #                     what makes a run survive the
+│                               #                     backend, because a step replays its
+│                               #                     parser over it. Pruned with the row
 ├── backend/
 │   ├── main.py                 # FastAPI app, routers, /static mount
 │   ├── api/routes/             # projects, pipeline, settings, defaults, files, models
 │   ├── api/websocket.py        # broadcast bus
 │   ├── api/file_handles.py     # the AsyncFile close fix (§7.8)
+│   ├── core/jobs.py            # the run record: one row per run + its log (§15.4)
 │   ├── core/config.py          # config.json  (AppConfig singleton)
 │   ├── core/defaults.py        # defaults.json (AppDefaults) + fps resolver
 │   ├── core/models_catalog.py  # the 12 checkpoints, read out of spirula.exe (§7.4b)
@@ -1563,7 +1574,9 @@ POST   /api/projects/{id}/archive      zip the directory away, keep the row disa
 POST   /api/projects/{id}/unarchive    unpack it back
 POST   /api/pipeline/start             start a step
 POST   /api/pipeline/control           abort
-GET    /api/pipeline/status            running state
+GET    /api/pipeline/status            running state — plus `job`, the run to restore (§15.4)
+GET    /api/pipeline/jobs              the recent runs, newest first (?project_id=&limit=)
+GET    /api/pipeline/jobs/{id}/log     one run's log: the tail, or everything ?after= a line
 POST   /api/pipeline/analyze           re-run curation alone — never re-extracts
 POST   /api/pipeline/masks             run `spirula sam` alone — never re-extracts (§7.4)
 POST   /api/pipeline/geometry          run `spirula geometry` alone — never re-trains (§7.5)
@@ -1744,6 +1757,10 @@ Any new dependency → add a row here in the same commit.
 
 | 2026-09-01 | **The staging box is fed by file copy, not by `git pull`, and `scripts/sync_staging.sh` is that delivery — written now because `version.py` had been documenting it for two days and it did not exist.** Staging is `\\Ws_tech4art_jbb\travail\DEV\SfM_Splat_App_26`, the PC that runs the reconstructions and serves the app on the LAN. It *is* a clone, so a pull looks like the obvious answer, and it is not: git over the share refuses outright — `detected dubious ownership`, the directory belongs to that machine's SID and not to this one's, so every command would need a `safe.directory` exception — and the pull would then have to reconcile, on a machine nobody is sitting at, **four files staging owns**. Those four are not drift: the API port moved 8000 → **8001** there on 2026-08-31 because `Manager.exe` holds `0.0.0.0:8000` on that workstation and a bind answers **WinError 10013** — access denied, not 10048, so it is not even a port clash to wait out. `main.py`, `vite.config.ts`, `start.bat` and `start.sh` carry that port and are **protected**: the script reports them and copies nothing, because a push that silently put 8000 back would take the server down and say nothing. `config.json` is *permanent* rather than protected — it is tracked, and staging's ffmpeg lives at a different path — so it is never read in either direction. **Line endings are not a change**: this worktree holds LF and that clone was checked out with autocrlf, so a byte comparison called a third of the tree modified for ever; `diff --strip-trailing-cr` took the first push from 32 files to **24**, and the eight it dropped — `version.py`, `AppTitle.tsx`, `frontend/index.html` among them — had no change in them at all. And because the sync never touches `.git`, staging's own HEAD answers for whenever somebody last ran git there; `.version_stamp.json` is what it cannot know, and §12's 2026-08-30 version format is why it carries `commit_count` as well as the date: the first stamp reads **2026.09.01.14**. The guard before any `.py` is written is the staging server's own `/api/pipeline/status` — `--reload` restarts the backend, which kills a running step and orphans the spirula child on the GPU, since `core/proc.py` holds the kill registry in memory. |
 
+| 2026-09-03 | **A run is a record on disk, because "the page closed and it stopped" turned out to be "the page closed and the run went invisible".** JB reported that leaving or closing the page shuts the computation down server-side. Read end to end before anything was written: it does not. The run is an `asyncio.Task` in the uvicorn process, tied to neither the request that started it nor the socket — `/ws/logs` disconnect only drops that client from the broadcast list — and **no `beforeunload` in this frontend aborts anything**, the only caller of `/pipeline/control abort` being the toolbar button. What died was the whole view: `pipelineRunning`, the bar and the 500-line LiveLog are all state in the store, so a reload left the step disabled on `running`, the log blank, the bar at zero and **no Abort button** — which renders on `pipelineRunning`. Indistinguishable from a dead job, and read as one. So `core/jobs.py` writes one `job` row and one `runs/<id>.ndjson` per run, teed from the bus by `JobRecord.wrap(broadcast)` — the steps are untouched, because they already take the bus by injection (§2.4) — `/api/pipeline/status` answers the run to restore, and `useRunRecovery` puts it back on mount and on every project switch. Measured on a real 238-image `sfm auto`: a status read **12 s in** gave `sfm`, step 3, **progress 0.380**, 273 lines and `[match] 2391/4810 pairs matched`; the log route returned **493 of 493** lines; an abort mid-run closed the row **`aborted` at 0.715** with the tool gone from the process table. Four decisions inside it: empty messages are not stored (§7.8's 354-of-419 bar lines), the metric payload **is**, so a restored run gets its chart back and not just its scrollback; the row closes from the same `finally` that demotes a stale step status, plus a startup sweep; and **`project_id` now rides on every run message** with the store dropping anything that is not the open project's — the display half of §13.7, a precondition here rather than a bonus. The log sits **outside `projects/`** because it describes a run and not a reconstruction, so §14.1 gains no row. **It is not a queue** — §1 stands, one job at a time, `_claim_slot` unchanged — and **it does not yet survive the backend**: that is TODO P7.2, and its blocker is that `proc.spawn` hands the child a pipe, which cannot outlive its reader. Found on the way and fixed at the root rather than worked around: the cp1252 console raises `UnicodeEncodeError` on the ✔ this now stores as a bound parameter under the engine's `echo=True`, which is the same defect `pipeline_runner._debug` handles by hand — one `sys.stdout.reconfigure(errors="replace")` at the top of `main.py` settles it for every printer in the process. |
+
+| 2026-09-03 | **A run now survives the backend, and what makes it possible is that the transcript is a file: the step replays its own parser over it and finishes a run another process started.** P7.2, and every premise was measured before any of it was built. A pipe cannot outlive its reader, so `--reload` firing or the Backend window closing killed the task and orphaned the tool on the GPU with everything it had said; `proc.spawn` inside a run context now redirects the child into `runs/<job_id>.tool.log` and starts it **`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`**, and the row remembers the pid, the image name and the process **creation time** — the last of these being what makes a recycled pid impossible to mistake for the child rather than merely unlikely. Four probes settled it: a process holding **no handle** on the file tails what a *foreign* child writes into it (28 reads over 6 s, **75 ms** median lag); a line costs **10 ms** median against the pipe it replaces; a child outlived its parent and a second process read its image name, its creation time and its real **exit code 7** through `GetExitCodeProcess`, while a bogus pid opened as nothing; and FFmpeg's `-progress pipe:1` still arrives live when pipe:1 is a file (18 blocks over a 10 s run), which is what step 2's bar rides. **Re-attaching is a replay, and that is why not one step changed**: the step is re-entered from the top, its reset is *refused* (`proc.adopting()` → `reset_steps` returns nothing, or it would delete the very `sfm/` the live tool is writing), `spawn` attaches to the pid instead of starting anything, and `iter_lines` reads the transcript from byte 0 — the step's own parser sees every line again, at speed, then slides into live tailing and finalises normally. Watched end to end: the backend **hard-killed** (`taskkill /F`, no cleanup) 31 % into a 6000-iteration training run, `spirula.exe` pid 12784 kept training with no backend in existence, the new one logged `re-attached 1 live run(s)`, `/status` answered `train running, adopted 1, progress 0.695`, and the run wrote a complete `train_result.json` — **exit 0, 6000 steps, 984 842 gaussians off the PLY header, psnr 31.84, 105 s**. `iterations_requested` came back **6000** rather than the project's stored value, which is the job row's own `settings_json`: a re-attached run reports what *this* run did. Abort was tested on an adopted run too, because §2.6 is not optional — `taskkill /F /T` works on a pid, so the tool went from the process table and the row closed `aborted`. Five things are deliberately not adoptable and the reasons differ: `curate`, `crop` and `splat_export` are numpy in this process and their state died with it (a live `splat-transform` is **killed** rather than left working for a result nobody will collect); `extract` starts up to three commands on the image-set branch, so a replay would re-run the first while the live one writes — the row counts `spawns` and adoption refuses more than one; and **a child that already finished**, which is the case the first run turned up rather than one that was predicted — a `spirula sfm auto` completed with **no backend at all** (31.43 s, `RESULT: OK -- 100% of the images registered`, `sparse/0` on disk) and nothing was there to collect it. Windows keeps no exit code once the last handle closes and this app does not invent one (§2.2), so that row is not finalised: it says exactly that, names the transcript, and the step must be re-run. Closing it means reading each tool's own completion marker, which the steps already parse — TODO P7.3, written down rather than guessed at. |
+
 Any new structural decision → add a row here in the same commit.
 
 ---
@@ -1798,8 +1815,11 @@ comes next. The genuinely open questions, in the order they block something:
    project is open.** Seen in P1.7: step 4 of the reference project displayed a second
    project's bar at 56 % with a live ETA. `/api/pipeline/start` refuses a second run
    only *for the same project*, so nothing enforces §1's "one running job at a time"
-   across projects. Two ways out — put `project_id` on every message and filter in the
-   store, or refuse a start while any project is running — and it is **JB's call**.
+   across projects. **Half-settled 2026-09-03**: the first way out — `project_id` on
+   every message, filtered in the store — shipped with §15.4, because a reconnecting
+   client has no other way to tell its own run from another project's. So the *display*
+   half is closed. Whether to also **refuse a start while any project is running** is
+   still **JB's call**.
 8. **`--progress-dir`'s binary channel** (§7.2). `model.bin` + `pairs.bin` snapshots
    while `sfm auto` runs, for a front end that shows the reconstruction assembling rather
    than tailing its log. A refinement, after the stdout bar works.
@@ -1910,6 +1930,144 @@ fields may be read.
 
 The training line here carries both on every one of its lines (§7.7), so this is not a
 hypothetical.
+
+### 15.4 The run is a record, so it outlives the page
+
+Everything above is a *channel*. This is where the reading of it is kept, because
+a channel nobody is listening to is a bar that does not exist.
+
+**Closing the page never stopped a run, and that had to be read before it could
+be fixed.** A run is an `asyncio.Task` created in the uvicorn process
+(`api/routes/pipeline.py`) and parked in `_running_tasks`; it is tied to neither
+the HTTP request that started it nor the socket, `/ws/logs` disconnect only
+drops that client from the broadcast list, and **nothing in the frontend aborts
+anything on `beforeunload`** — the one caller of `/pipeline/control abort` is the
+toolbar button. The tool keeps working.
+
+**What died was the view, completely, which is indistinguishable from a dead
+job.** `pipelineRunning` is state in the Zustand store, and so are the bar and
+the 500-line LiveLog. Come back mid-training and the step is disabled because
+the row says `running`, the log is empty, the bar is at zero, and there is **no
+Abort button**, because it renders on `pipelineRunning`. A dead end reachable by
+reloading a page.
+
+So `core/jobs.py` writes the run down. One `job` row per run — kind, the wizard
+step it reports into, state, progress, last message, error, started/finished —
+and one `runs/<job_id>.ndjson` beside it, teed from the bus itself:
+`JobRecord.wrap(broadcast)` returns a broadcaster with the same signature, so
+nothing under `core/steps/` changes or learns what a job is (§2.4's injection,
+used as intended). `/api/pipeline/status` then answers `job`, and
+`useRunRecovery` restores the step status, the bar, the log tail and
+`pipelineRunning` on mount and on every project switch.
+
+Measured 2026-09-03 on `zz_abort_test`, a real `sfm auto` over 238 frames: a
+status read **12 s in** answered `running: true`, `sfm`, step 3, **progress
+0.380**, 273 lines, last message `[match] 2391/4810 pairs matched`; the log
+route returned **493 of 493** lines, 392 of them carrying a progress value; and
+an abort mid-run closed the row **`aborted` at 0.715** with the tool gone from
+the process table. A re-analysis on the same project wrote **3 lines and
+finished `done` at 1.0** in 80 ms.
+
+Four things it does that a naive "write a log file" would not:
+
+- **Empty messages are dropped, not stored.** `step_mesh` rides the bar on 354
+  of its 419 lines with an empty message precisely so the LiveLog never sees
+  them (§7.8); the file holds what the panel holds.
+- **The metric payload is teed with the text**, so a restored run gets its
+  *chart* back and not just its scrollback. The trainer puts both on every bar
+  line (§7.7) and a 30 000-iteration run is 300 of them — the longest thing in
+  this app is also the one most likely to be reloaded through.
+- **The row closes however the task left.** `finish()` is called from the same
+  `finally` that demotes a stale step status, and a job left on `running` is
+  that dead end one layer down; `close_orphaned_jobs()` sweeps at startup what a
+  killed backend left behind, so a job reported by `/status` is live.
+- **`project_id` rides on every message a run broadcasts**, and the store drops
+  one that is not the open project's. That is the display half of §13.7, and it
+  is a *precondition* here rather than a bonus: a client that has just
+  reconnected has no other way to tell its own run from another project's.
+
+**The log lives in `runs/`, outside `projects/`**, because it describes a run
+rather than a reconstruction: §14.1 gains no row, and no reset, copy or archive
+has to reason about it. It is pruned to the last 200 runs, and `prune()` also
+sweeps a log file no row claims — Windows refuses to unlink a file another
+handle still holds, so a delete landing while its writer is live would otherwise
+leave the file behind with its row gone.
+
+**None of this is a queue.** §1's "no job queue" is untouched: one user, one job
+at a time, still enforced by `_claim_slot`. It is the same single job, made
+durable enough to be found again.
+
+**And it survives the backend, because the transcript is a file and the child
+is detached** — P7.2, and the mechanism is one measurement deep rather than
+clever. A pipe cannot outlive its reader: `--reload` firing or the Backend
+window closing took the task with it and orphaned the tool on the GPU with
+everything it had said. So `proc.spawn`, inside a run context, redirects the
+child's output into `runs/<job_id>.tool.log` and starts it
+`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, and the row remembers the pid,
+the image name and the process **creation time**.
+
+Measured first, built second (2026-09-03):
+
+| Question | Answer |
+|---|---|
+| Can a process holding no handle tail a file a *foreign* child writes? | Yes — 28 reads over 6 s, **75 ms median lag** at a 200 ms poll |
+| What does a line cost against the pipe it replaces? | median **10 ms**, p95 20 ms, bounded by the reader's own poll (50 ms live) |
+| Does the child outlive its parent? | Yes: the parent exited, the child kept writing |
+| Can a later process identify it from a pid alone? | Yes — image name **and** creation time both matched; a bogus pid opens as nothing |
+| Can it read the exit code of a process it never spawned? | Yes — **7**, through `GetExitCodeProcess` |
+| Does FFmpeg's `-progress pipe:1` still arrive live when pipe:1 is a file? | Yes — 18 blocks over a 10 s run, `out_time_us` climbing, exit 0 |
+
+**Re-attaching is a replay of the step over its own transcript, and that is why
+no step changed.** At startup `jobs.adoption_candidates()` splits the rows left
+`running` into what is still alive and what is not; `pipeline.adopt_orphaned_runs()`
+re-enters the runner for each survivor with `adopt=<row>`. The step then runs
+from the top: it re-reads its inputs, **its reset is refused**
+(`proc.adopting()` → `reset_steps` returns nothing, or it would delete the very
+`sfm/` the live tool is writing), `spawn` attaches to the pid instead of
+starting anything, and `iter_lines` reads the transcript **from byte 0** — so
+the step's own parser sees every line it already saw, at speed, and slides into
+live tailing when it catches up. It then judges the exit code and writes its
+result file exactly as it would have. The derived ndjson is dropped and rebuilt
+by the replay rather than appended to, because it is derived.
+
+Watched end to end on `zz_abort_test`, a 6000-iteration training run: the
+backend was **hard-killed** (`taskkill /F`, no cleanup at all) at 31 %,
+`spirula.exe` pid 12784 kept training with **no backend in existence**, the new
+backend logged `re-attached 1 live run(s)`, `/status` answered `train running,
+adopted 1, pid 12784, progress 0.695`, and the run finished and wrote a
+complete `train_result.json` — **exit 0, 6000 steps, 984 842 gaussians read off
+the PLY header, psnr 31.84, 105 s**. Started by one backend, finalised by
+another. `iterations_requested` came back **6000** rather than the project's
+stored value, which is the job's own `settings_json` doing its job: a
+re-attached run reports what *this* run did. Abort was then tested on an adopted
+run, because §2.6 is not optional: `taskkill /F /T` works on a pid and not on a
+handle we hold, so the tool went from the process table and the row closed
+`aborted`.
+
+Five things are deliberately **not** adoptable, and the reasons differ:
+
+- **`curate`, `crop`, `splat_export`** — their work is numpy in this process,
+  and it died with it. A live child of one of these (`splat-transform`) is
+  **killed** rather than left, because it is working for a result nobody will
+  collect.
+- **`extract`** — the image-set branch of step 2 starts up to three commands
+  (`step_conform`), and a replay would re-run the first while the live one is
+  still writing. It is also the cheapest step to simply run again: 238 frames in
+  80 s. The row records `spawns` and adoption refuses anything above one.
+- **A child that already finished.** This is the case the first P7.2 run turned
+  up rather than one that was predicted: a `spirula sfm auto` completed with no
+  backend at all — 31.43 s, `RESULT: OK -- 100% of the images registered`,
+  `sparse/0` complete on disk — and nothing was there to collect it. Windows
+  keeps no exit code once the last handle closes, and this app does not invent
+  one (§2.2), so the run is not finalised: the row says exactly that, names the
+  transcript, and the step has to be re-run to regenerate its report. What could
+  close this is each tool's own completion marker — the trainer's
+  `Training complete.`, `sfm`'s `RESULT:`, `mesh`'s `done:` — which the steps
+  already parse; it is written down in TODO P7.3 rather than guessed at here.
+
+`reconcile_orphaned_steps` therefore takes a `skip` set: a step belonging to a
+run that was just re-attached is not stale, it is running.
+
 
 ### 15.3 Where the bars are flat, and the honest fallback
 
