@@ -47,6 +47,7 @@ import asyncio
 import json
 import re
 import time
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -92,6 +93,10 @@ def list_exports(train_dir: Path) -> list[Path]:
         f for f in target.iterdir()
         if f.is_file() and f.name != EXPORT_RESULT_NAME
         and not f.name.endswith(".part")
+        # The two staging names a run writes under before it knows the number
+        # its output gets. They live and die inside one run, but a hard kill
+        # can leave one behind and the drawer is a list of deliverables.
+        and not f.name.startswith(".")
     ]
     return sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
 
@@ -99,10 +104,10 @@ def list_exports(train_dir: Path) -> list[Path]:
 def clear_exports(train_dir: Path) -> int:
     """Remove every exported file. Returns how many went.
 
-    The panel's one destructive button. `train/export/` is a drawer of
-    deliverables that accumulates — one per format, one per settings change —
-    and nothing else in the app ever prunes it, because every file in it is
-    something somebody may have asked for on purpose.
+    The panel's one destructive button, and now the *only* thing in the app
+    that removes an export: `train/export/` is a drawer of deliverables that
+    accumulates one numbered file per run, and nothing else ever prunes it,
+    because every file in it is something somebody asked for on purpose.
     """
     removed = 0
     for path in list_exports(train_dir):
@@ -114,27 +119,72 @@ def clear_exports(train_dir: Path) -> int:
     return removed
 
 
-def output_name(project_slug: str, plan: splat_export.ExportPlan,
-                source_cropped: bool) -> str:
-    """The filename, built out of what was actually done to the file.
+#: Anything a filesystem, a URL or somebody else's downloads folder would
+#: rather not carry. Runs of them collapse into one underscore.
+_UNSAFE = re.compile(r"[^A-Za-z0-9]+")
+
+#: `<slug>_<count>_<number>.<ext>` — the name this module writes, read back.
+#: `.+` is greedy on purpose: a slug ending in digits (`..._006`) splits at the
+#: *last* two numeric groups, which is where the count and the number are.
+_NUMBERED = re.compile(r"^(?P<slug>.+)_(?P<count>\d+)_(?P<number>\d+)\.")
+
+
+def conform(name: str) -> str:
+    """A project name reduced to what every filesystem carries the same way.
+
+    Project slugs are already lowercase and underscored, so this is a no-op on
+    all of them — it is here for the one that is not, because the export is the
+    only file in this app that leaves the machine under a name a person reads.
+    """
+    ascii_only = (
+        unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    )
+    return _UNSAFE.sub("_", ascii_only).strip("_").lower() or "project"
+
+
+def next_number(target_dir: Path, slug: str) -> int:
+    """One past the highest number this project's drawer already holds.
+
+    Counted across the whole drawer rather than per format or per count, so the
+    numbers read as what they are — this project's exports, in the order they
+    were made. Names written before this rule (the old settings-suffixed ones)
+    match nothing and are simply left alone.
+    """
+    highest = 0
+    if target_dir.is_dir():
+        for f in target_dir.iterdir():
+            match = _NUMBERED.match(f.name)
+            if match and match.group("slug") == slug:
+                highest = max(highest, int(match.group("number")))
+    return highest + 1
+
+
+def output_name(slug: str, count: int, number: int, fmt: str) -> str:
+    """`<project>_<gaussians>_<number>.<ext>`.
 
     Never `splat.ply`: that is the name `find_splat` and `find_export_splat`
     look for, and an export dropped under it would be picked up by step 5 as
-    the splat to mesh. The suffixes are the settings in the order they
-    appear on the panel, so two exports of one project cannot collide unless
-    they really are the same export.
+    the splat to mesh.
+
+    **The number is what makes an export non-destructive.** The name used to be
+    built out of the settings, on the theory that two exports could only collide
+    if they really were the same export — and that was wrong in the case that
+    matters: the settings say nothing about *which* splat was read, so re-cropping
+    or re-training and exporting again wrote the new deliverable over the old one
+    at the same path, silently. The count now says what is in the file and the
+    number says nothing at all except that it is a different file.
     """
-    parts = [project_slug]
-    if source_cropped:
-        parts.append("crop")
-    if plan.sh_degree is not None:
-        parts.append(f"sh{plan.sh_degree}")
-    if plan.opacity_min > 0:
-        parts.append(f"a{plan.opacity_min:g}".replace(".", ""))
-    if plan.max_count > 0:
-        parts.append(f"{plan.max_count // 1000}k" if plan.max_count >= 1000
-                     else str(plan.max_count))
-    return "_".join(parts) + splat_export.SUFFIXES[plan.format]
+    return f"{slug}_{count}_{number}{splat_export.SUFFIXES[fmt]}"
+
+
+def next_free(target_dir: Path, slug: str, count: int, fmt: str) -> Path:
+    """The path this export gets. Never one that exists."""
+    number = next_number(target_dir, slug)
+    while True:
+        path = target_dir / output_name(slug, count, number, fmt)
+        if not path.exists():
+            return path
+        number += 1
 
 
 def _describe(plan: splat_export.ExportPlan, source_degree: Optional[int]) -> str:
@@ -330,7 +380,16 @@ async def run_splat_export(
 
     header = ply.read_header(source)
     source_degree = splat_export.source_sh_degree(header)
-    target = export_dir(train_dir) / output_name(project_path.name, plan, cropped)
+
+    # The name carries the gaussian count of the file it names, and that count
+    # is only known once the reduction has run — an opacity floor drops however
+    # many gaussians sit under it. So both routes write under a staging name
+    # first and the finished file is renamed onto its number, which is also
+    # what keeps the number the *last* thing decided: a run that fails or is
+    # aborted takes no number with it and leaves no gap in the drawer.
+    exports = export_dir(train_dir)
+    exports.mkdir(parents=True, exist_ok=True)
+    slug = conform(project_path.name)
 
     # The viewpoint the user parked the viewer at and saved (§7.6d). It rides
     # *into* the file when the file can carry it — a native PLY, as `comment`
@@ -373,7 +432,7 @@ async def run_splat_export(
         f"[export] {source.parent.name}/{source.name} "
         f"({'the crop' if cropped else 'the trained splat'}, "
         f"{header.count:,} gaussians, {source.stat().st_size / 1e6:.1f} MB) "
-        f"→ {target.name}: {_describe(plan, source_degree)}",
+        f"→ {_describe(plan, source_degree)}",
         progress=0.02,
     )
 
@@ -383,7 +442,7 @@ async def run_splat_export(
         # external tool picks its *reader* by extension too. It goes in a
         # `finally`, so a failed conversion does not leave a 178 MB file in a
         # directory the user is about to download from.
-        staged = target.with_name(target.name + ".staged.ply")
+        staged = exports / ".export.staged.ply"
         try:
             native = await _write(
                 source, staged,
@@ -391,6 +450,9 @@ async def run_splat_export(
                                            "format": splat_export.FORMAT_PLY}),
                 broadcast_fn, should_abort, floor=0.02, ceiling=0.70,
             )
+            # The native pass has counted the rows, so the converted file can be
+            # written straight onto its final name — there is nothing to rename.
+            target = next_free(exports, slug, native["count"], plan.format)
             await _convert(
                 staged, target, project_path, broadcast_fn, should_abort,
                 floor=0.72, ceiling=0.99,
@@ -402,10 +464,17 @@ async def run_splat_export(
                   "plan": plan.as_dict(),
                   "seconds": round(time.perf_counter() - started, 2)}
     else:
-        result = await _write(
-            source, target, plan, broadcast_fn, should_abort,
-            floor=0.02, ceiling=0.99, comments=comments,
-        )
+        pending = exports / f".export.pending{splat_export.SUFFIXES[plan.format]}"
+        try:
+            result = await _write(
+                source, pending, plan, broadcast_fn, should_abort,
+                floor=0.02, ceiling=0.99, comments=comments,
+            )
+            target = next_free(exports, slug, result["count"], plan.format)
+            ply.finalise(pending, target)
+        except BaseException:
+            pending.unlink(missing_ok=True)
+            raise
 
     sidecar: Optional[Path] = None
     if view is not None and not embed:

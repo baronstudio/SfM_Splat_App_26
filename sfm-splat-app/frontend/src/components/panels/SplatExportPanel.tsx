@@ -388,9 +388,13 @@ const SplatExportPanel: React.FC<{ tool: SplatExportTool; disabled?: boolean }> 
           {tool.running ? 'Exporting…' : 'Export'}
         </Button>
         <span className="text-xs text-slate-500">
-          Writes into <span className="font-mono">train/export/</span>. Nothing
-          in the pipeline reads it — the mesh step keeps using the trained
-          splat.
+          Writes{' '}
+          <span className="font-mono">
+            &lt;project&gt;_&lt;gaussians&gt;_&lt;n&gt;.&lt;ext&gt;
+          </span>{' '}
+          into <span className="font-mono">train/export/</span>, a new number
+          every time — an export never overwrites an earlier one. Nothing in the
+          pipeline reads it; the mesh step keeps using the trained splat.
         </span>
       </div>
 
