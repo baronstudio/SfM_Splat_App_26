@@ -106,6 +106,15 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     threeScene: THREE.Scene;
     splatMesh: SplatMesh;
     addSplatScene(path: string, options?: AddSplatSceneOptions): AbortablePromise<void>;
+    /**
+     * The draw call, declared because `SplatCanvas` **replaces** it: it is an
+     * instance field on the built class rather than a prototype method, so an
+     * assignment wins and the wrapper can still call the original. That is how
+     * the crop gizmo gets a pass of its own *after* the gaussians — the two
+     * `renderer.render` calls this makes leave nothing else able to draw over
+     * them.
+     */
+    render(): void;
     start(): void;
     stop(): void;
     setRenderMode(mode: number): void;

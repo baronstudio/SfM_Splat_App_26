@@ -23,6 +23,12 @@ import {
  *   `depthTest` off: the splats render with `depthWrite: false`, so a volume
  *   inside the cloud would otherwise be a cage you can only see the near half of.
  *
+ * Depth-test-free is only half of being in front, and the other half is not
+ * here: the whole gizmo goes into `SplatCanvas`'s **overlay scene**, drawn in a
+ * pass of its own after the splat mesh. The library renders its scene and its
+ * gaussians in two separate `renderer.render` calls, and neither `depthTest`
+ * nor `renderOrder` reaches across one of those.
+ *
  * The geometries are unit-sized — a 2×2×2 box, a radius-1 sphere — so the
  * group's `scale` *is* the volume's half-extent and the gizmo's scale handles
  * edit it directly, with no conversion anywhere.
@@ -31,7 +37,8 @@ import {
 const KEEP_COLOUR = 0x22d3ee;    // cyan-400 — the gaussians this keeps
 const DELETE_COLOUR = 0xf87171;  // red-400  — the gaussians this removes
 
-// Drawn after everything else, and through it. See the note above.
+// Drawn after everything else *in the overlay scene*, and through it. See the
+// note above for what puts the overlay itself in front of the gaussians.
 const RENDER_ORDER = 900;
 
 // A pointer that moved further than this between down and up was a camera
@@ -254,9 +261,14 @@ export function buildCropGizmo(options: CropGizmoOptions): CropGizmoHandle {
         // dispatch a change event that would otherwise fire continuously.
         if (controls.object !== selected.group) controls.attach(selected.group);
         if (controls.mode !== mode) controls.setMode(mode);
-        // Scale is forced local by TransformControls itself; world is the
-        // readable choice for the other two.
-        controls.setSpace('world');
+        // All three handles wear the volume's own orientation. `TransformControls`
+        // forces `scale` local whatever `space` says ("scale always oriented to
+        // local rotation"), so leaving the other two on `world` gave one gizmo
+        // per mode: rotate a box, then switch to scale, and the handles jumped.
+        // Local everywhere is the one that reads as a single object — the
+        // exception being rotate's outer screen-space ring (`E` / `XYZE`), which
+        // the class forces back to world because it has no local axis to be on.
+        controls.setSpace('local');
       } else if (controls.object) {
         controls.detach();
       }

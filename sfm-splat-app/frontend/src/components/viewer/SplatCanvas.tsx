@@ -124,6 +124,7 @@ export const SplatCanvas: React.FC<SplatCanvasProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<GaussianSplats3D.Viewer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const overlayRef = useRef<THREE.Scene | null>(null);
   const rigRef = useRef<CameraRig | null>(null);
   const gizmoRef = useRef<CropGizmoHandle | null>(null);
   const [ready, setReady] = useState(0);
@@ -154,6 +155,11 @@ export const SplatCanvas: React.FC<SplatCanvasProps> = ({
 
     const threeScene = new THREE.Scene();
     sceneRef.current = threeScene;
+    // Everything that must be drawn *over* the gaussians rather than among
+    // them. See the render wrapper below for why it cannot just live in
+    // `threeScene` with `depthTest` off.
+    const overlayScene = new THREE.Scene();
+    overlayRef.current = overlayScene;
 
     const viewer = new GaussianSplats3D.Viewer({
       rootElement: mount,
@@ -168,6 +174,37 @@ export const SplatCanvas: React.FC<SplatCanvasProps> = ({
       logLevel: GaussianSplats3D.LogLevel.None,
     });
     viewerRef.current = viewer;
+
+    // ── The overlay pass ──────────────────────────────────────────────────
+    // `Viewer.render()` makes **two** `renderer.render` calls: `threeScene`
+    // first, then the splat mesh, with `autoClear` off between them. So the
+    // gaussians are painted over anything in the shared scene no matter what
+    // it asks for — `depthTest: false` and `renderOrder` only order objects
+    // *within* one call, and the splats write no depth for a second call to
+    // test against. That is why the crop gizmo drew behind the splat even
+    // though every one of its materials is depth-test-free.
+    //
+    // A third call after theirs is the whole fix: same camera, same target,
+    // `autoClear` off so it composites onto the frame they just drew, and a
+    // depth clear so the handles are never occluded by the camera rig either.
+    // The wrapper degrades to nothing if the library ever stops exposing
+    // `render` as an instance method — the gizmo would simply be behind the
+    // splat again, which is where it already was.
+    const baseRender = typeof viewer.render === 'function'
+      ? (viewer.render.bind(viewer) as () => void)
+      : null;
+    if (baseRender) {
+      viewer.render = () => {
+        baseRender();
+        const renderer = viewer.renderer;
+        if (!renderer || overlayScene.children.length === 0) return;
+        const savedAutoClear = renderer.autoClear;
+        renderer.autoClear = false;
+        renderer.clearDepth();
+        renderer.render(overlayScene, viewer.camera);
+        renderer.autoClear = savedAutoClear;
+      };
+    }
 
     // The toolbar's two viewpoint actions. Installed before the load rather
     // than after it, so the buttons are never wired to a viewer that has since
@@ -280,6 +317,7 @@ export const SplatCanvas: React.FC<SplatCanvasProps> = ({
       if (viewpointApi) viewpointApi.current = null;
       viewerRef.current = null;
       sceneRef.current = null;
+      overlayRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
@@ -324,11 +362,13 @@ export const SplatCanvas: React.FC<SplatCanvasProps> = ({
   const cropEnabled = Boolean(crop);
   useEffect(() => {
     const viewer = viewerRef.current;
-    const scene = sceneRef.current;
-    if (!cropEnabled || !ready || !viewer?.renderer || !scene) return undefined;
+    // The overlay, not `threeScene`: the volumes and their handles are the tool
+    // rather than the data, and they are drawn after the gaussians.
+    const overlay = overlayRef.current;
+    if (!cropEnabled || !ready || !viewer?.renderer || !overlay) return undefined;
 
     const handle = buildCropGizmo({
-      scene,
+      scene: overlay,
       camera: viewer.camera,
       domElement: viewer.renderer.domElement,
       orbit: viewer.controls ?? null,
