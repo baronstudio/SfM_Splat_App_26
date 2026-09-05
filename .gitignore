@@ -38,3 +38,8 @@ sfm-splat-app/runs/
 
 # Editor scaffold: one machine, and it carries no project setting.
 *.code-workspace
+
+# Local delivery scripts (scripts/sync_staging.sh): they describe this
+# workstation's route to the staging box — its share path, its protected
+# files — and not the application. Kept on disk, out of the repository.
+scripts/
